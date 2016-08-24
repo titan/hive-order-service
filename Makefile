@@ -2,7 +2,12 @@ DISTDIR=./dist
 SRCDIR=./src
 SERVER=$(DISTDIR)/server.js
 PROCESSOR=$(DISTDIR)/processor.js
-NPM=cnpm
+NPM=npm
+
+NS = hive
+VERSION ?= 1.0.0
+
+REPO = order-service
 
 all: $(SERVER) $(PROCESSOR)
 
@@ -18,7 +23,13 @@ node_modules:
 typings:
 	typings install
 
+build: all
+	docker build -t $(NS)/$(REPO):$(VERSION) .
+
+rmi:
+	docker rmi $(NS)/$(REPO):$(VERSION)
+
 clean:
 	rm -rf $(DISTDIR)
 
-.PHONY: all clean
+.PHONY: all build rmi clean

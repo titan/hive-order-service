@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+command="node"
+command_args_foreground="/code/server.js > /var/log/server.log 2>&1"
+description="Hive order Server"
+pidfile="/var/run/server.pid"
+supervisor=supervise-daemon
