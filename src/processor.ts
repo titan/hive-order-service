@@ -85,11 +85,13 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
             done();
             return;
           }
-          let p = rpc(ctx.domain, 'tcp://vehicle:4040', ctx.uid, 'getVehicleInfos', vincode, 0, -1));
-          p.then((v) => {
-          let driver_order = []; 
+          // let p = rpc(args2.domain, 'tcp://vehicle:4040', args2.uid, 'getVehicleInfos', args2.vin, 0, -1);
+          // p.then((drivers) => {
+          // let driver_id = drivers.id;
+          // let driver_name = drivers.name; 
+          let driver_order = [args2.vid,args2.dids,args2.summary,args2.payment]; 
           let multi = cache.multi();
-          multi.hset("driver_order_entity", id, JSON.stringify(order));
+          multi.hset("driver_order_entity", id, JSON.stringify(driver_order));
           multi.sadd("driver_order_key", id);
           multi.exec((err3, replies) => {
             if (err3) {
@@ -97,6 +99,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
             }
             done(); // close db and cache connection
           });
+          // });
         });
     });
 });

@@ -120,7 +120,9 @@ svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction,v
 });
 svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction,vid:string, dids:string[], summary:string, payment:string) => {
   log.info('getDetail %j', ctx);
-  let args = [vid,dids,summary,payment]
+  let uid = ctx.uid;
+  let domain = ctx.domain;
+  let args = [vid,dids,summary,payment,uid,domain]
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args2: args}));
   rep({ status: "okay" });
 });
