@@ -1,4 +1,4 @@
-import { Service, Config, Context, ResponseFunction, Permission } from 'hive-service';
+import { Server, Config, Context, ResponseFunction, Permission } from 'hive-server';
 import * as Redis from "redis";
 import * as nanomsg from 'nanomsg';
 import * as msgpack from 'msgpack-lite';
@@ -112,18 +112,21 @@ svc.call('getSaleOrders', permissions, (ctx: Context, rep: ResponseFunction) => 
     }
   });
 });
-svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction,args) => {
+svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction,vid:string, plans:string[], pmid:string, service_ratio:string, summary:string, payment:string) => {
   log.info('getDetail %j', ctx);
+  let args = [vid,plans,pmid,service_ratio,summary,payment]
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args1: args}));
   rep({ status: "okay" });
 });
-svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction,args) => {
+svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction,vid:string, dids:string[], summary:string, payment:string) => {
   log.info('getDetail %j', ctx);
+  let args = [vid,dids,summary,payment]
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args2: args}));
   rep({ status: "okay" });
 });
-svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction,args) => {
+svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction,vid,items,summary,payment) => {
   log.info('getDetail %j', ctx);
+  let args = [vid,items,summary,payment]
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args3: args}));
   rep({ status: "okay" });
 });
