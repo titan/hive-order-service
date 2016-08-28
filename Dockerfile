@@ -1,15 +1,9 @@
-FROM hive/node-openrc-base:6.3.1
-#FROM mhart/alpine-node:latest
+FROM hive/node-base:6.3.1
 
 WORKDIR /code
 
-ADD dist/server.js .
-ADD dist/processor.js .
+ADD dist .
 ADD node_modules ./node_modules
+ADD script/deployment.json .
 
-ADD script/server /etc/init.d
-ADD script/processor /etc/init.d
-
-RUN rc-update add server default && rc-update add processor default
-
-EXPOSE 4040
+CMD [ "forever", "deployment.json" ]

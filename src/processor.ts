@@ -1,6 +1,27 @@
 import { Processor, Config, ModuleFunction, DoneFunction } from 'hive-processor';
 import { Client as PGClient, ResultSet } from 'pg';
 import { createClient, RedisClient} from 'redis';
+import * as bunyan from 'bunyan';
+
+let log = bunyan.createLogger({
+  name: 'order-processor',
+  streams: [
+    {
+      level: 'info',
+      path: '/var/log/processor-info.log',  // log ERROR and above to a file
+      type: 'rotating-file',
+      period: '1d',   // daily rotation
+      count: 7        // keep 7 back copies
+    },
+    {
+      level: 'error',
+      path: '/var/log/processor-error.log',  // log ERROR and above to a file
+      type: 'rotating-file',
+      period: '1w',   // daily rotation
+      count: 3        // keep 7 back copies
+    }
+  ]
+});
 
 let config: Config = {
   dbhost: process.env['DB_HOST'],
@@ -13,71 +34,107 @@ let config: Config = {
 
 let processor = new Processor(config);
 
-processor.call('placeAnOrder', (db: PGClient, cache: RedisClient, done: DoneFunction,id:string, pid:string,veid:string,orid:string,moid:string,licencse_no:string,
-vin:string, engine_no:string, register_date:string, average_mileage:string, fuel_type:string, receipt_no:string, receipt_date:string, last_insurance_company:string,
- vehicle_license_frontal_view:string, vehicle_license_rear_view:string, did:string, name:string, gender:string,
- identity_no:string, phone:string, identity_frontal_view:string, identity_rear_view:string, service_ratio:string, price:string, actual_price:string) => {
-  db.query('INSERT INTO drivers(did, orid, name, gender, identity_no, phone, identity_frontal_view, identity_rear_view) VALUE($1,$2,$3,$4,$5,$6,$7,$8)',
-    [did, orid, name, gender, identity_no, phone, identity_frontal_view, identity_rear_view],(err:Error,result:ResultSet) =>{
+processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: DoneFunction,args1,id,id1) => {
+    log.info('placeAnOrder');
+  db.query('INSERT INTO plan_order(id, vid, pmid, service_ratio, summary, payment,expect_at, start_at, stop_at, created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+    [id, args1.vid,args1.pmid, args1.service_ratio, args1.summary, args1.payment, args1.expect_at],(err:Error,result:ResultSet) =>{
     if (err) {
-      console.error('query error',err.message,err.stack);
+      log.error(err, 'query error');
       done();
       return;
     }
-    db.query('INSERT INTO vehicles(veid, orid, moid, licencse_no, vin, engine_no,register_date, average_mileage, fuel_type,receipt_no,receipt_date,last_insurance_company,\
-    vehicle_license_frontal_view,vehicle_license_rear_view) VALUE($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
-    [veid,orid,moid,licencse_no,vin,engine_no,register_date,average_mileage,fuel_type,receipt_no,receipt_date,last_insurance_company,
-    vehicle_license_frontal_view,vehicle_license_rear_view],(err1:Error,result1:ResultSet) =>{
-      if (err1) {
-       console.error('query error',err.message,err.stack);
-       done();
-       return;
-      }
-    db.query('INSERT INTO orders(id, pid, service_ratio, price, actual_price) VALUE($1,$2,$3,$4,$5)',[id, pid, service_ratio, price,actual_price],(err2:Error,result2:ResultSet)=>{
-      if (err2) {
-        console.error('query error',err.message,err.stack);
-        done();
-        return;
-      }
-    let order = [id, pid, licencse_no, vin, engine_no, register_date, average_mileage, fuel_type, receipt_no,
-          receipt_date, last_insurance_company, vehicle_license_frontal_view, vehicle_license_rear_view, did, name, gender, identity_no, phone,
-          identity_frontal_view, identity_rear_view, service_ratio, price, actual_price];
+  db.query('INSERT INTO order_item(id1, piid, pid, price) VALUES($1,$2,$3,$4)',
+    [id, args1.vid,args1.plans.piid, args1.pid, args1.plans.price],(err:Error,result:ResultSet) =>{
+    if (err) {
+      log.error(err, 'query error');
+      done();
+      return;
+    }
+// 三级缓存
+    // let order = args;
+    //      let multi = cache.multi();
+    //         multi.hset("order-entity", id, JSON.stringify(args));
+    //         multi.sadd("orders", id);
+    //       multi.exec((err3, replies) => {
+    //         if (err3) {
+    //           log.error(err3, 'query error');
+    //         }
+    //         done(); // close db and cache connection
+    //       });
+     });
+    });
+});
+
+processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: DoneFunction,args2,id ) => {
+    log.info('placeAnOrder');
+  db.query('INSERT INTO driver_order(id, vid, summary, payment) VALUES($1,$2,$3,$4)',
+    [id,args2.vid,args2.summary,args2.payment],(err:Error,result:ResultSet) =>{
+    if (err) {
+      log.error(err, 'query error');
+      done();
+      return;
+    }
+    let driver_order = [];
          let multi = cache.multi();
-            multi.hset("order-entity", id, JSON.stringify(order));
-            multi.sadd("order", id);
-          multi.exec((err, replies) => {
-            if (err) {
-              console.error(err);
+            multi.hset("driver_order_entity", id, JSON.stringify(order));
+            multi.sadd("driver_order_key", id);
+          multi.exec((err3, replies) => {
+            if (err3) {
+              log.error(err3, 'query error');
             }
             done(); // close db and cache connection
           });
      });
-   });
-  });
 });
+processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: DoneFunction,args3,id) => {
+    log.info('placeAnOrder');
+  db.query('INSERT INTO sale_order(id, vid, pid,start_at,stop_at) VALUES($1,$2,$3,$4,$5)',
+    [id, args3.vid, args3.pid, args3.start_at, args3.stop_at],(err:Error,result:ResultSet) =>{
+    if (err) {
+      log.error(err, 'query error');
+      done();
+      return;
+    }
+        let sale_order=args3;
+            // sale_order.push(row2sale_order(args3));
+            let multi = cache.multi();
+            multi.hset("sale_order_entity", id, JSON.stringify(sale_order));
+            multi.sadd("sale_order_key", id);
+            multi.exec((err3, replies) => {
+            if (err3) {
+              log.error(err3, 'query error');
+            }
+            done(); // close db and cache connection
+          });
+     });
+});
+function row2driver_order(args2) {
+  return {
+    vid: args2.vid,
+    dids:[],
+    summary:args2.summary,
+    payment:args2.payment
+  };
+}
 
-// function row2order(row) {
+function row2dids(args2) {
+  return {
+    // 新增司机数量从哪里取
+     };
+}
+// function row2sale_order(args3) {
 //   return {
-//     id: row.id,
-//     pid: row.pid,
-//     vehicles:[],
-//     drivers:[],
-//     service_ratio: row.service_ratio,
-//     price: row.price,
-//     actual_price: row.actual_price
+//     vid: args3.vid,
+//     summary:args3.summary,
+//     payment:args3.payment,
+//     items:[]
 //   };
 // }
 
-// function row2driver(row) {
+// function row2items(args3) {
 //   return {
-//     id: row.id,
-//     name: row.name,
-//     gender: row.gender,
-//     identity_no: row.identity_no,
-//     phone: row.phone,
-//     identity_frontal_view: row.identity_frontal_view? row.identity_frontal_view.trim():'',
-//     identity_rear_view: row.identity_rear_view? row.identity_rear_view.trim():'',
-//   };
+//     items:args3.order_items
+//      };
 // }
 
 // function row2vehicle(row) {

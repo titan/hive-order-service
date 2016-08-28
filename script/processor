@@ -1,6 +1,0 @@
-#!/sbin/openrc-run
-command="node"
-command_args_foreground="/code/processor.js > /var/log/processor.log 2>&1"
-description="Hive order Processor Service"
-pidfile="/var/run/processor.pid"
-supervisor=supervise-daemon
