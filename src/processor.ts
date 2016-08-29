@@ -53,9 +53,10 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
             done();
             return;
           }
-          let planorder = [args1.vid, args1.plans, args1.pmid, args1.service_ratio, args1.summary, args1.payment]
+          let plan_order = [args1.vid, args1.plans, args1.pmid, args1.service_ratio, args1.summary, args1.payment]
           let multi = cache.multi();
-          multi.hset("plan_order-entity", id, JSON.stringify(planorder));
+          multi.hset("plan_order-entity", id, JSON.stringify(plan_order));
+          multi.hset("order_entities",id,JSON.stringify(plan_order));
           multi.sadd("plan_orders_key", id);
           multi.exec((err3, replies) => {
             if (err3) {
@@ -85,13 +86,14 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
             done();
             return;
           }
-          // let p = rpc(args2.domain, 'tcp://vehicle:4040', args2.uid, 'getVehicleInfos', args2.vin, 0, -1);
-          // p.then((drivers) => {
-          // let driver_id = drivers.id;
-          // let driver_name = drivers.name; 
+          let p = rpc(args2.domain, 'tcp://vehicle:4040', args2.uid, 'getVehicleInfos', args2.vid, 0, -1);
+          p.then((drivers) => {
+          let driver_id = drivers.id;
+          let driver_name = drivers.name; 
           let driver_order = [args2.vid,args2.dids,args2.summary,args2.payment]; 
           let multi = cache.multi();
           multi.hset("driver_order_entity", id, JSON.stringify(driver_order));
+          multi.hset("order_entities",id,JSON.stringify(driver_order));
           multi.sadd("driver_order_key", id);
           multi.exec((err3, replies) => {
             if (err3) {
@@ -99,7 +101,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
             }
             done(); // close db and cache connection
           });
-          // });
+          });
         });
     });
 });
@@ -124,6 +126,7 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
           let sale_order = [args3.vid,args3.items,args3.summary,args3.payment];
           let multi = cache.multi();
           multi.hset("sale_order_entity", id, JSON.stringify(sale_order));
+          multi.hset("order_entities",id,JSON.stringify(sale_order))
           multi.sadd("sale_order_key", id);
           multi.exec((err3, replies) => {
             if (err3) {

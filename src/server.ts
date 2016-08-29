@@ -1,4 +1,4 @@
-import { Server, Config, Context, ResponseFunction, Permission } from 'hive-server';
+import { server, Config, Context, ResponseFunction, Permission } from 'hive-server';
 import * as Redis from "redis";
 import * as nanomsg from 'nanomsg';
 import * as msgpack from 'msgpack-lite';
@@ -28,6 +28,7 @@ let log = bunyan.createLogger({
 let uuid = require('node-uuid');
 let redis = Redis.createClient(6379, "redis"); // port, host
 
+let list_entities ="order-";
 let driver_order_entity = "driver-order-";
 let driver_order_key = "driver_order";
 let sale_order_entity = "sale-order-";
@@ -40,7 +41,7 @@ let config: Config = {
   msgaddr: 'ipc:///tmp/queue.ipc'
 };
 
-let svc = new Service(config);
+let svc = new service(config);
 
 let permissions: Permission[] = [['mobile', true], ['admin', true]];
 

@@ -101,7 +101,7 @@ CREATE TABLE order_item(
 CREATE TABLE order_event(
   id uuid PRIMARY KEY,
   oid uuid NOT NULL,
-  uid uuid NOT NULL,
+  uid uuid NOT NULL REFERENCES ON users DELETE CASCADE,
   data json NOT NULL,
   occurred_at timestamp
 );
