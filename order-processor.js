@@ -305,7 +305,8 @@ processor.call('placeAnDriverOrder', (db, cache, done, args2) => {
     let state = "已创建订单";
     let type = "1";
     let driver_id = uuid.v1();
-    let plan_data = "添加驾驶人";
+    let driver_data1 = "添加驾驶人";
+    let driver_data = JSON.stringify(driver_data1);
     let created_at = new Date().getTime();
     let created_at1 = getLocalTime(created_at / 1000);
     db.query('BEGIN', (err) => {
@@ -321,9 +322,9 @@ processor.call('placeAnDriverOrder', (db, cache, done, args2) => {
                     return;
                 }
                 else {
-                    db.query('INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)', [event_id, order_id, args2.uid], (err, result) => {
+                    db.query('INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)', [event_id, order_id, args2.uid, driver_data], (err, result) => {
                         if (err) {
-                            log.error(err, ' insert info order_events error in placeAnDriverOrder');
+                            log.error(err, 'insert info order_events error in placeAnDriverOrder');
                             done();
                             return;
                         }
@@ -343,17 +344,22 @@ processor.call('placeAnDriverOrder', (db, cache, done, args2) => {
                                         async_serial(driver_promises, [], drivers => {
                                             let order = { summary: args2.summary, state: state, payment: args2.payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
                                             let order_drivers = { drivers: drivers, vehicle: vehicle };
+                                            log.info("===================drivers" + drivers);
+                                            log.info('====order_drivers' + JSON.stringify(order_drivers));
                                             let multi = cache.multi();
                                             multi.zadd("driver_orders", created_at, order_id);
                                             multi.zadd("orders", created_at, order_id);
                                             multi.zadd("orders-" + args2.uid, created_at, order_id);
-                                            multi.hset("order-driver-entities-" + args2.vid, JSON.stringify(order_drivers));
+                                            multi.hset("driver-entities-" + args2.vid, JSON.stringify(order_drivers));
                                             multi.hset("order-entities", order_id, JSON.stringify(order));
                                             multi.exec((err3, replies) => {
                                                 if (err3) {
                                                     log.error(err3, 'query redis error');
                                                 }
-                                                done();
+                                                else {
+                                                    log.info('placeAnDriverOrder:==========is done');
+                                                    done();
+                                                }
                                             });
                                         });
                                     }
@@ -368,22 +374,42 @@ processor.call('placeAnDriverOrder', (db, cache, done, args2) => {
 });
 processor.call('updateOrderState', (db, cache, done, args4) => {
     log.info('updateOrderState');
-    db.query(`UPDATE orders SET state_code = ${args4.state_code},state = ${args4.state} WHERE id = ${args4.order_id}`, (err, result) => {
+    let code = parseInt(args4.state_code, 10);
+    db.query('UPDATE orders SET state_code = $1,state = $2 WHERE id = $3', [code, args4.state, args4.order_id], (err, result) => {
         if (err) {
+            log.info(err);
             log.info('err,updateOrderState error');
             done();
             return;
         }
         else {
             let multi = cache.multi();
-            multi.hget("order-entities", args4.order_id, (err, result) => {
-                if (result) {
-                    let order_entities = JSON.parse(result);
-                    order_entities["state_code"] = args4.state_code;
-                    order_entities["state"] = args4.state;
-                    multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities), (err, result) => {
-                        log.info('db end in updateOrderState');
-                        done();
+            log.info(args4.order_id + '====================================');
+            multi.hget("order-entities", args4.order_id);
+            multi.exec((err, replise) => {
+                if (err) {
+                    log.info('err,get redis error');
+                    done();
+                }
+                else {
+                    log.info('================' + replise);
+                    let order_entities = replise;
+                    args4.state_code = order_entities["state_code"];
+                    log.info("=============" + order_entities["state_code"]);
+                    args4.state = order_entities["state"];
+                    log.info('=====================1321' + order_entities["state"]);
+                    log.info('======================1111' + order_entities);
+                    let multi = cache.multi();
+                    multi.hset("order-entities", args4.order_id, order_entities);
+                    multi.exec((err, result1) => {
+                        if (err) {
+                            log.info('err:hset order_entities error');
+                            done();
+                        }
+                        else {
+                            log.info('db end in updateOrderState');
+                            done();
+                        }
                     });
                 }
             });

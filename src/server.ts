@@ -150,7 +150,7 @@ svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, 
 });
 
 // 更改订单状态
-svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_id, state_code: string, state: string) => {
+svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_id:any, state_code: string, state: string) => {
   let uid = ctx.uid;
   let args = { ctx, uid, order_id, state_code, state };
   log.info('updateOrderState', args);

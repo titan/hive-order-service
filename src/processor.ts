@@ -47,6 +47,7 @@ function getLocalTime(nS) {
   return new Date(parseInt(nS) * 1000).toLocaleString().replace(/:\d{1,2}$/, ' ');
 }
 
+
 function insert_order_item_recursive(db, done, plans, pid, args1, piids, acc, cb) {
   if (piids.length == 0) {
     cb(acc);
@@ -343,6 +344,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
                     async_serial(driver_promises, [], drivers => {
                       let order = { summary: args2.summary, state: state, payment: args2.payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
                       let order_drivers = { drivers: drivers, vehicle: vehicle };
+                      log.info("===================drivers" + drivers);
                       log.info('====order_drivers' + JSON.stringify(order_drivers));
                       let multi = cache.multi();
                       multi.zadd("driver_orders", created_at, order_id);
@@ -374,7 +376,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
 processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: DoneFunction, args4) => {
   log.info('updateOrderState');
   let code = parseInt(args4.state_code, 10);
-  db.query("UPDATE orders SET state_code = code,state = args4.state from,WHERE id = args4.order_id", (err: Error, result: ResultSet) => {
+  db.query('UPDATE orders SET state_code = $1,state = $2 WHERE id = $3', [code, args4.state, args4.order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
       log.info('err,updateOrderState error');
@@ -383,14 +385,31 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
     }
     else {
       let multi = cache.multi();
-      multi.hget("order-entities", args4.order_id, (err, result) => {
-        if (result) {
-          let order_entities = JSON.parse(result);
-          order_entities.state_code = args4.state_code;
-          order_entities.state = args4.state;
-          multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities), (err, result) => {
-            log.info('db end in updateOrderState');
-            done();
+      log.info(args4.order_id + '====================================');
+      multi.hget("order-entities", args4.order_id);
+      multi.exec((err, replise) => {
+        if (err) {
+          log.info('err,get redis error');
+          done();
+        } else {
+          log.info('================' + replise);
+          let order_entities = JSON.parse(replise);
+          log.info(order_entities);
+          order_entities["state_code"] = args4.state_code;
+          log.info("=============" + order_entities["state_code"]);
+          order_entities["state"] = args4.state;
+          log.info('=====================1321' + order_entities["state"]);
+          log.info('======================1111' + order_entities);
+          let multi = cache.multi();
+          multi.hset("order-entities", args4.order_id,JSON.stringify(order_entities));
+          multi.exec((err, result1) => {
+            if (err) {
+              log.info('err:hset order_entities error');
+              done();
+            } else {
+              log.info('db end in updateOrderState');
+              done();
+            }
           });
         }
       });
