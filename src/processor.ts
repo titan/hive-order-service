@@ -43,6 +43,9 @@ function formatNum(Source: string, Length: number): string {
   }
   return strTemp + Source;
 }
+function getLocalTime(nS) {
+  return new Date(parseInt(nS) * 1000).toLocaleString().replace(/:\d{1,2}$/, ' ');
+}
 
 function insert_order_item_recursive(db, done, plans, pid, args1, piids, acc, cb) {
   if (piids.length == 0) {
@@ -100,11 +103,42 @@ function insert_plan_order_recursive(db, done, order_id, args1, pids, acc/* plan
   }
 }
 
+function insert_driver_order_recursive(db, done, order_id, args2, dids, acc/* plan-id: [order-item-id] */, cb) {
+  if (dids.length == 0) {
+    db.query('COMMIT', [], (err: Error) => {
+      if (err) {
+        log.info(err);
+        log.error(err, 'insert plan order commit error');
+        done();
+      } else {
+        cb(acc);
+      }
+    });
+  } else {
+    let did = dids.shift();
+    db.query('INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)', [order_id, did], (err: Error, result: ResultSet) => {
+      if (err) {
+        log.info(err);
+        db.query('ROLLBACK', [], (err: Error) => {
+          log.error(err, 'insert into driver_order_ext error');
+          done();
+        });
+      } else {
+        insert_driver_order_recursive(db, done, order_id, args2, dids, acc, cb);
+      }
+    });
+  }
+}
+
+
+
+
 function async_serial(ps: Promise<any>[], acc: any[], cb: (vals: any[]) => void) {
   if (ps.length == 0) {
     cb(acc);
   } else {
     let p = ps.shift();
+    log.info(p + '2222222222===============================');
     p.then(val => {
       acc.push(val);
       async_serial(ps, acc, cb);
@@ -114,10 +148,23 @@ function async_serial(ps: Promise<any>[], acc: any[], cb: (vals: any[]) => void)
       });
   }
 }
-
+function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) => void) {
+  if (ps.length == 0) {
+    cb(acc);
+  } else {
+    let p = ps.shift();
+    p.then(val => {
+      acc.push(val);
+      async_serial_driver(ps, acc, cb);
+    })
+      .catch(e => {
+        async_serial_driver(ps, acc, cb);
+      });
+  }
+}
 processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: DoneFunction, args1) => {
   log.info('placeOrder');
-  let order_id = uuid.v1();
+  let order_id = args1.order_id;
   let event_id = uuid.v1();
   let state_code = "1";
   let state = "已创建订单";
@@ -135,7 +182,7 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
       for (var plan in args1.plans) {
         pids.push(plan);
       }
-      log.info(pids);
+      // log.info(pids);
       let sum = 0;
       for (let i of pids) {
         let str = i.substring(24);
@@ -144,7 +191,7 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
       }
       let sum2 = sum + '';
       let sum1 = formatNum(sum2, 3);
-      let order_no = 'P' + '110' + 'OA' + sum1 + year + no;
+      let order_no = '1' + '110' + '001' + sum1 + year + no;
       db.query('BEGIN', (err: Error) => {
         if (err) {
           log.error(err, 'query error');
@@ -164,8 +211,8 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                     done();
                   });
                 } else {
-                  insert_plan_order_recursive(db, done, order_id, args1, pids, {}, (pid_oiids_obj) => {
-                    let p = rpc(args1.ctx.domain, hostmap.default["vehicle"], null, "getVehicleInfo", args1.vid);
+                  insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
+                    let p = rpc(args1.ctx.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args1.vid);
                     let p2 = rpc(args1.ctx.domain, hostmap.default["quotation"], null, "getQuotation", args1.qid);
                     let plan_promises = [];
                     for (let pid of pids) {
@@ -181,28 +228,49 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                             log.info("call quotation error");
                           }
                           else {
-                            async_serial(plan_promises, [], plans => {
+                            async_serial_driver(plan_promises, [], plans => {
                               let plan_items = [];
                               for (let plan1 of plans) {
-                                let item = plan1.items;
-                                plan_items.push(item);
-                              }
-                              let piids = [];
-                              for (let pid in pids) {
-                                for (var item in args1.plans[pid]) {
-                                  piids.push(item);
+                                for (let plan2 in plan1.items) {
+                                  plan_items.push(plan1.items[plan2]);
                                 }
                               }
-                              let items = [pid_oiids_obj, args1.plans["pid"]["piid"], pids, plan_items];
-                              let orders = [order_id, args1.expect_at];
-                              let order = [args1.summary, state, args1.payment, args1.stop_at, args1.service_ratio, plans, items, args1.expect_at, state_code, order_id, type, vehicle];
-                              let plan_order = [args1.updata_at, order_id];
-                              log.info("placeAnOrder:" + JSON.stringify(order));
-                              let multi = cache.multi();
+                              let piids = [];
+                              let prices = [];
+                              for (let pid in args1.plans) {
+                                for (let piid in args1.plans[pid]) {
+                                  piids.push(piid);
+                                  prices.push(args1.plans[pid][piid]);
+                                }
+                              }
+                              let item_ids = [];
+                              for (let pid in pid_oiids_obj) {
+                                item_ids.push(pid_oiids_obj[pid]);
+                              }
+                              let items = [];
+                              log.info('piids=============' + piids + 'prices=========' + prices + 'item_ids====================' + item_ids + 'plan_items========================' + plan_items);
+                              let len = Math.min(piids.length, prices.length, plan_items.length);
+                              log.info('=====length' + len);
+                              for (let i = 0; i < len; i++) {
+                                let item_id = piids.shift();
+                                let price = prices.shift();
+                                // let pid = item_ids.shift();
+                                let plan_item = plan_items.shift();
+                                items.push({ item_id, price, plan_item });
+                              }
+                              log.info(plan_items + '111111111111111========================');
                               let created_at = new Date().getTime();
+                              let created_at1 = getLocalTime(created_at / 1000);
+                              let orders = [order_id, args1.expect_at];
+                              let order = {
+                                summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle
+                              };
+                              // let order_qid = {}
+                              let multi = cache.multi();
                               multi.zadd("plan-orders", created_at, order_id);
                               multi.zadd("orders", created_at, order_id);
                               multi.zadd("orders-" + args1.uid, created_at, order_id);
+                              // multi.hset("order-qid" + args1.uid, args1.qid);
                               multi.hset("order-entities", order_id, JSON.stringify(order));
                               multi.exec((err3, replies) => {
                                 if (err3) {
@@ -238,45 +306,99 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
   let state = "已创建订单";
   let type = "1";
   let driver_id = uuid.v1();
-  // let plan_data = "新增plan计划
-
-  db.query('INSERT INTO orders(id, vid, type,state_code,state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)', [order_id, args2.vid, type, state_code, state, args2.summary, args2.payment], (err: Error, result: ResultSet) => {
+  let driver_data1 = "添加驾驶人";
+  let driver_data = JSON.stringify(driver_data1);
+  let created_at = new Date().getTime();
+  let created_at1 = getLocalTime(created_at / 1000);
+  db.query('BEGIN', (err: Error) => {
     if (err) {
       log.error(err, 'query error');
       done();
-      return;
-    }
-    db.query('INSERT INTO driver_order_ext(id, oid,pid,) VALUES($1,$2,$3)', [driver_id, order_id, args2.dids], (err: Error, result: ResultSet) => {
-      if (err) {
-        log.error(err, 'query error');
-        done();
-        return;
-      }
-      db.query('INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)', [event_id, order_id, args2.uid], (err: Error, result: ResultSet) => {
+    } else {
+      // vid, dids, summary, payment
+      db.query('INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)', [order_id, args2.vid, type, state_code, state, args2.summary, args2.payment], (err: Error, result: ResultSet) => {
         if (err) {
-          log.error(err, 'query error');
+          log.error(err, ' insert orders  error in placeAnDriverOrder');
           done();
           return;
         }
-
-        let order = [args2.summary, state, args2.payment, args2.stop_at, args2.dids, args2.updated_at,
-          args2.start_at, args2.created_at, state_code, order_id, type, args2.vid];
-        let driver_order = [args2.updata_at, order_id];
-        let multi = cache.multi();
-        multi.zadd("driver_orders", driver_id);
-        multi.zadd("orders", order_id);
-        multi.zadd("orders-uid", args2.uid);
-        multi.hset("order_entities", order_id, JSON.stringify(order));
-        multi.exec((err3, replies) => {
-          if (err3) {
-            log.error(err3, 'query error');
-          }
-          done(); // close db and cache connection
-        });
+        else {
+          db.query('INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)', [event_id, order_id, args2.uid, driver_data], (err: Error, result: ResultSet) => {
+            if (err) {
+              log.error(err, 'insert info order_events error in placeAnDriverOrder');
+              done();
+              return;
+            } else {
+              insert_driver_order_recursive(db, done, order_id, args2, args2.dids.map(did => did), {}, () => {
+                let p = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
+                let driver_promises = [];
+                for (let did of args2.dids) {
+                  let p1 = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getDriverInfos", args2.vid, did);
+                  driver_promises.push(p1);
+                }
+                p.then((vehicle) => {
+                  if (err) {
+                    log.info("call vehicle error");
+                  } else {
+                    async_serial(driver_promises, [], drivers => {
+                      let order = { summary: args2.summary, state: state, payment: args2.payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
+                      let order_drivers = { drivers: drivers, vehicle: vehicle };
+                      log.info('====order_drivers' + JSON.stringify(order_drivers));
+                      let multi = cache.multi();
+                      multi.zadd("driver_orders", created_at, order_id);
+                      multi.zadd("orders", created_at, order_id);
+                      multi.zadd("orders-" + args2.uid, created_at, order_id);
+                      multi.hset("driver-entities-" + args2.vid, JSON.stringify(order_drivers));
+                      multi.hset("order-entities", order_id, JSON.stringify(order));
+                      multi.exec((err3, replies) => {
+                        if (err3) {
+                          log.error(err3, 'query redis error');
+                        } else {
+                          log.info('placeAnDriverOrder:==========is done');
+                          done(); // close db and cache connection
+                        }
+                      });
+                    });
+                  }
+                });
+              });
+            }
+          });
+        }
       });
-    });
+    }
   });
 });
+
+// 订单状态更新state_code state
+processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: DoneFunction, args4) => {
+  log.info('updateOrderState');
+  let code = parseInt(args4.state_code, 10);
+  db.query("UPDATE orders SET state_code = code,state = args4.state from,WHERE id = args4.order_id", (err: Error, result: ResultSet) => {
+    if (err) {
+      log.info(err);
+      log.info('err,updateOrderState error');
+      done();
+      return;
+    }
+    else {
+      let multi = cache.multi();
+      multi.hget("order-entities", args4.order_id, (err, result) => {
+        if (result) {
+          let order_entities = JSON.parse(result);
+          order_entities.state_code = args4.state_code;
+          order_entities.state = args4.state;
+          multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities), (err, result) => {
+            log.info('db end in updateOrderState');
+            done();
+          });
+        }
+      });
+    }
+  });
+});
+
+
 // let args = {uid,vid,items,summary,payment};{piid: price}
 processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: DoneFunction, args3) => {
   log.info('placeAnOrder');
@@ -289,7 +411,7 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
   let sale_id = uuid.v1();
   // let plan_data = "新增plan计划"
 
-  db.query('INSERT INTO orders(id, vid, type,state_code,state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)', [order_id, args3.vid, type, state_code, state, args3.summary, args3.payment], (err: Error, result: ResultSet) => {
+  db.query('INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)', [order_id, args3.vid, type, state_code, state, args3.summary, args3.payment], (err: Error, result: ResultSet) => {
     if (err) {
       log.error(err, 'query error');
       done();
@@ -327,7 +449,7 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
           }
 
           // let args = {uid,vid,plans,pmid,service_ratio,summary,payment,expect_at};
-          let items = [item_id, piid, args3.items["piid"]]
+          let items = [item_id, piid, args3.items["piid"]];
           let order = [args3.summary, state, args3.payment, args3.stop_at, args3.items.piid, items, args3.updated_at,
             args3.start_at, args3.created_at, state_code, order_id, type, args3.vid];
           let sale_order = [args3.updata_at, order_id];
