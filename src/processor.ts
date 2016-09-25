@@ -229,7 +229,7 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                             log.info("call quotation error");
                           }
                           else {
-                            async_serial_driver(plan_promises, [], plans => {
+                            async_serial(plan_promises, [], plans => {
                               let plan_items = [];
                               for (let plan1 of plans) {
                                 for (let plan2 in plan1.items) {
@@ -266,12 +266,12 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                               let order = {
                                 summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle
                               };
-                              // let order_qid = {}
+                              let order_vid = { state, state_code };
                               let multi = cache.multi();
                               multi.zadd("plan-orders", created_at, order_id);
                               multi.zadd("orders", created_at, order_id);
                               multi.zadd("orders-" + args1.uid, created_at, order_id);
-                              // multi.hset("order-qid" + args1.uid, args1.qid);
+                              multi.hset("order-vid-" + args1.vid, args1.qid, JSON.stringify(order_vid));
                               multi.hset("order-entities", order_id, JSON.stringify(order));
                               multi.exec((err3, replies) => {
                                 if (err3) {
@@ -304,7 +304,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
   let item_id = uuid.v1();
   let event_id = uuid.v1();
   let state_code = "1";
-  let state = "已创建订单";
+  let state = "已支付";
   let type = "1";
   let driver_id = uuid.v1();
   let driver_data1 = "添加驾驶人";
@@ -334,6 +334,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
                 let p = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
                 let driver_promises = [];
                 for (let did of args2.dids) {
+                  log.info('=================================did' + did);
                   let p1 = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getDriverInfos", args2.vid, did);
                   driver_promises.push(p1);
                 }
@@ -341,7 +342,7 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
                   if (err) {
                     log.info("call vehicle error");
                   } else {
-                    async_serial(driver_promises, [], drivers => {
+                    async_serial_driver(driver_promises, [], drivers => {
                       let order = { summary: args2.summary, state: state, payment: args2.payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
                       let order_drivers = { drivers: drivers, vehicle: vehicle };
                       log.info("===================drivers" + drivers);
@@ -350,11 +351,12 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
                       multi.zadd("driver_orders", created_at, order_id);
                       multi.zadd("orders", created_at, order_id);
                       multi.zadd("orders-" + args2.uid, created_at, order_id);
-                      multi.hset("driver-entities-" + args2.vid, JSON.stringify(order_drivers));
+                      multi.hset("driver-entities-", args2.vid, JSON.stringify(order_drivers));
                       multi.hset("order-entities", order_id, JSON.stringify(order));
                       multi.exec((err3, replies) => {
                         if (err3) {
                           log.error(err3, 'query redis error');
+                          done();
                         } else {
                           log.info('placeAnDriverOrder:==========is done');
                           done(); // close db and cache connection
@@ -401,7 +403,7 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
           log.info('=====================1321' + order_entities["state"]);
           log.info('======================1111' + order_entities);
           let multi = cache.multi();
-          multi.hset("order-entities", args4.order_id,JSON.stringify(order_entities));
+          multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities));
           multi.exec((err, result1) => {
             if (err) {
               log.info('err:hset order_entities error');

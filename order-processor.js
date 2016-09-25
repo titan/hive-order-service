@@ -267,10 +267,12 @@ processor.call('placeAnPlanOrder', (db, cache, done, args1) => {
                                                             let order = {
                                                                 summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle
                                                             };
+                                                            let order_vid = { state: state, state_code: state_code };
                                                             let multi = cache.multi();
                                                             multi.zadd("plan-orders", created_at, order_id);
                                                             multi.zadd("orders", created_at, order_id);
                                                             multi.zadd("orders-" + args1.uid, created_at, order_id);
+                                                            multi.hset("order-vid-" + args1.vid, args1.qid, JSON.stringify(order_vid));
                                                             multi.hset("order-entities", order_id, JSON.stringify(order));
                                                             multi.exec((err3, replies) => {
                                                                 if (err3) {
@@ -350,7 +352,7 @@ processor.call('placeAnDriverOrder', (db, cache, done, args2) => {
                                             multi.zadd("driver_orders", created_at, order_id);
                                             multi.zadd("orders", created_at, order_id);
                                             multi.zadd("orders-" + args2.uid, created_at, order_id);
-                                            multi.hset("driver-entities-" + args2.vid, JSON.stringify(order_drivers));
+                                            multi.hset("driver-entities-", args2.vid, JSON.stringify(order_drivers));
                                             multi.hset("order-entities", order_id, JSON.stringify(order));
                                             multi.exec((err3, replies) => {
                                                 if (err3) {
@@ -393,14 +395,15 @@ processor.call('updateOrderState', (db, cache, done, args4) => {
                 }
                 else {
                     log.info('================' + replise);
-                    let order_entities = replise;
-                    args4.state_code = order_entities["state_code"];
+                    let order_entities = JSON.parse(replise);
+                    log.info(order_entities);
+                    order_entities["state_code"] = args4.state_code;
                     log.info("=============" + order_entities["state_code"]);
-                    args4.state = order_entities["state"];
+                    order_entities["state"] = args4.state;
                     log.info('=====================1321' + order_entities["state"]);
                     log.info('======================1111' + order_entities);
                     let multi = cache.multi();
-                    multi.hset("order-entities", args4.order_id, order_entities);
+                    multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities));
                     multi.exec((err, result1) => {
                         if (err) {
                             log.info('err:hset order_entities error');

@@ -32,7 +32,8 @@ let redis = Redis.createClient(6379, "redis"); // port, host
 let order_entities = "order-entities";
 let orders = "orders-";
 let order_key = "orders";
-let order_driver_entities = "order-driver-entities-";
+let driver_entities = "driver-entities-";
+let order_vid = "order-vid-";
 // let orders_key = "uid";
 
 let config: Config = {
@@ -103,11 +104,25 @@ svc.call('getOrders', permissions, (ctx: Context, rep: ResponseFunction, offset:
     }
   });
 });
+//查看订单状态
+svc.call('getOrderState', permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string) => {
+  // http://redis.io/commands/smembers
+  log.info('getorderstate');
+  redis.hget(order_vid + vid, qid, function (err, result) {
+    if (err || result == null) {
+      rep({ code: 500, state: "not found" });
+    } else {
+      rep(JSON.parse(result));
+    }
+  });
+});
+
+
 // 获取驾驶人信息
 svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   // http://redis.io/commands/smembers
   log.info('getorders');
-  redis.hget(order_driver_entities + vid, function (err, result) {
+  redis.hget(driver_entities, vid, function (err, result) {
     if (err) {
       log.info('get redis error in getDriverOrders');
       log.info(err);
@@ -126,14 +141,14 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
 svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
   let uid = ctx.uid;
   let order_id = uuid.v1();
-  let args = { ctx, uid, order_id, vid, plans, qid, pmid, service_ratio, summary, payment,v_value, expect_at };
+  let args = { ctx, uid, order_id, vid, plans, qid, pmid, service_ratio, summary, payment, v_value, expect_at };
   log.info('placeplanorder %j', args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
   rep({ status: "okay", order_id: order_id });
 });
 // 下司机单
-svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: string[], summary: string, payment: string) => {
-  log.info('getDetail %j', ctx);
+svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: string, payment: string) => {
+  log.info('getDetail %j', dids);
   let uid = ctx.uid;
   let args = { ctx, uid, vid, dids, summary, payment };
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
@@ -150,7 +165,7 @@ svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, 
 });
 
 // 更改订单状态
-svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_id:any, state_code: string, state: string) => {
+svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_id: any, state_code: string, state: string) => {
   let uid = ctx.uid;
   let args = { ctx, uid, order_id, state_code, state };
   log.info('updateOrderState', args);

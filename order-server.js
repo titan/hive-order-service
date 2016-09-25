@@ -28,7 +28,8 @@ let redis = Redis.createClient(6379, "redis");
 let order_entities = "order-entities";
 let orders = "orders-";
 let order_key = "orders";
-let order_driver_entities = "order-driver-entities-";
+let driver_entities = "driver-entities-";
+let order_vid = "order-vid-";
 let config = {
     svraddr: hostmap.default["order"],
     msgaddr: 'ipc:///tmp/order.ipc'
@@ -93,9 +94,20 @@ svc.call('getOrders', permissions, (ctx, rep, offset, limit) => {
         }
     });
 });
+svc.call('getOrderState', permissions, (ctx, rep, vid, qid) => {
+    log.info('getorderstate');
+    redis.hget(order_vid + vid, qid, function (err, result) {
+        if (err || result == null) {
+            rep({ code: 500, state: "not found" });
+        }
+        else {
+            rep(JSON.parse(result));
+        }
+    });
+});
 svc.call('getDriverOrders', permissions, (ctx, rep, vid) => {
     log.info('getorders');
-    redis.hget(order_driver_entities + vid, function (err, result) {
+    redis.hget(driver_entities, vid, function (err, result) {
         if (err) {
             log.info('get redis error in getDriverOrders');
             log.info(err);
