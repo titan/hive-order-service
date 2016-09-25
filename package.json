@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "bunyan": "^1.8.1",
+    "hive-processor": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-processor.git",
+    "hive-server": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-server.git",
+    "msgpack-lite": "^0.1.20",
+    "nanomsg": "^3.2.1",
+    "node-string-format": "0.0.3",
+    "pg": "^6.1.0",
+    "pg-pool": "^1.4.0",
+    "redis": "^2.6.2"
+  }
+}

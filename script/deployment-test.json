@@ -1,0 +1,16 @@
+[
+  {
+    "uid": "server",
+    "append": true,
+    "watch": true,
+    "script": "server.js",
+    "sourceDir": "/code/dist"
+  },
+  {
+    "uid": "processor",
+    "append": true,
+    "watch": true,
+    "script": "processor.js",
+    "sourceDir": "/code/dist"
+  }
+]
