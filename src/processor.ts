@@ -1,9 +1,12 @@
-import { Processor, Config, ModuleFunction, DoneFunction, rpc, } from 'hive-processor';
+import { Processor, Config, ModuleFunction, DoneFunction, rpc, async_serial, async_serial_ignore } from 'hive-processor';
 import { Client as PGClient, ResultSet } from 'pg';
 import { createClient, RedisClient} from 'redis';
 import * as bunyan from 'bunyan';
 import * as uuid from 'uuid';
 import * as hostmap from './hostmap';
+import * as msgpack from "msgpack-lite";
+import * as nanomsg from "nanomsg";
+import * as http from "http";
 let log = bunyan.createLogger({
   name: 'order-processor',
   streams: [
@@ -489,6 +492,84 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
       });
     });
   });
+});
+
+processor.call("createUnderwrite", (db:PGClient, cache: RedisClient, done: DoneFunction, args) => {
+    log.info("createUnderwrite");
+    let pcreate = new Promise<void>((resolve, reject) => {
+        db.query("INSERT INTO underwrite (id, oid, plan_time, validate_place, validate_update_time) VALUES ($1, $2, $3, $4, $5)", [args.uwid, args.oid, args.plan_time, args.validate_place, args.validate_update_time], (err: Error) => {
+            if (err) {
+                reject (err);
+            } else {
+                resolve();
+            }
+        });
+    });
+    async_serial<void>(pcreate, [], () => {
+        let now = new Date();
+        let underwrite = {
+            id: args.uwid,
+            order_id: args.oid,
+            plan_time: args.plan_time,
+            validate_place: args.validate_place,
+            validate_update_time: args.validate_update_time,
+            created_at: now,
+            updated_at: now,
+            deleted: false
+        }
+        let multi = cache.multi();
+        let uwid = args.uwid;
+        multi.hset("underwrite-entities", uwid, underwrite);
+        multi.zadd("underwrite", now.getTime(), uwid);
+        multi.setex(args.callback, 30, {
+            code: 200,
+            uwid: uwid
+        });
+        multi.exec();
+        order_tirgger.send(msgpack.encode({uwid, underwrite}));
+    }, (e: Error) => {
+        cache.setex(args.callback, 30, {
+            code: 500,
+            msg: e.message
+        });
+    });
+});
+
+processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done:DoneFunction, args) => {
+   log.info("fillUnderwrite args is " + args); 
+   let pfill = new Promise<void>((resolve, reject) => {
+       db.query("INSERT INTO underwrite (real_place, operator, certificate_state, problem_type, problem_description) VALUES ($1, $2, $3, $4, $5) WHERE id = $6", [args.real_place, args.operator, args.certificate_state, args.problem_type, args.problem_description, args.uwid], (err:Error) => {
+           if (err) {
+                reject (err);
+            } else {
+                resolve();
+            }
+       });
+   });
+   async_serial<void>(pfill, [], () => {
+       let multi = cache.multi();
+       let underwrite = {}
+       redis.hget("underwrite-entities", args.uwid, function(err, result) {
+           underwrite = result;
+           underwrite["real_place"] = args.real_place;
+           underwrite["operator"] = args.operator;
+           underwrite["certificate_state"] = args.certificate_state;
+           underwrite["problem_type"] = args.problem_type;
+           underwrite["problem_description"] = args.problem_description;
+       });
+       redis.hset("underwrite-entities", args.uwid, underwrite, function(err, result) {
+           if(err){
+               log.info("err: " + err)
+           }
+       });
+       let uwid = args.uwid;
+       order_tirgger.send(msgpack.encode({uwid, underwrite}));
+   }, (e: Error) => {
+        cache.setex(args.callback, 30, {
+            code: 500,
+            msg: e.message
+        });
+    });
 });
 
 processor.run();
