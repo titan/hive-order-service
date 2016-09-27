@@ -3,6 +3,7 @@ import { Client as PGClient, ResultSet } from 'pg';
 import { createClient, RedisClient} from 'redis';
 import * as bunyan from 'bunyan';
 import * as uuid from 'uuid';
+import { servermap, triggermap } from "hive-hostmap";
 import * as hostmap from './hostmap';
 import * as msgpack from "msgpack-lite";
 import * as nanomsg from "nanomsg";
@@ -37,7 +38,8 @@ let config: Config = {
   addr: "ipc:///tmp/order.ipc"
 };
 let processor = new Processor(config);
-
+let order_trigger = nanomsg.socket("pub");
+order_trigger.bind(triggermap.order);
 
 function formatNum(Source: string, Length: number): string {
   var strTemp = "";
@@ -494,18 +496,22 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
   });
 });
 
+//生成核保
 processor.call("createUnderwrite", (db:PGClient, cache: RedisClient, done: DoneFunction, args) => {
-    log.info("createUnderwrite");
+    log.info("createUnderwrite " + args);
     let pcreate = new Promise<void>((resolve, reject) => {
-        db.query("INSERT INTO underwrite (id, oid, plan_time, validate_place, validate_update_time) VALUES ($1, $2, $3, $4, $5)", [args.uwid, args.oid, args.plan_time, args.validate_place, args.validate_update_time], (err: Error) => {
+        db.query("INSERT INTO underwrites (id, oid, plan_time, validate_place, validate_update_time) VALUES ($1, $2, $3, $4, $5)", [args.uwid, args.oid, args.plan_time, args.validate_place, args.validate_update_time], (err: Error) => {
             if (err) {
-                reject (err);
+                log.info("err" + err)
+                reject(err);
             } else {
+                log.info("success")
                 resolve();
             }
         });
     });
-    async_serial<void>(pcreate, [], () => {
+    pcreate.then((resolve) => {
+        log.info("pcreate")
         let now = new Date();
         let underwrite = {
             id: args.uwid,
@@ -519,56 +525,141 @@ processor.call("createUnderwrite", (db:PGClient, cache: RedisClient, done: DoneF
         }
         let multi = cache.multi();
         let uwid = args.uwid;
-        multi.hset("underwrite-entities", uwid, underwrite);
+        multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
         multi.zadd("underwrite", now.getTime(), uwid);
-        multi.setex(args.callback, 30, {
+        multi.setex(args.callback, 30, JSON.stringify({
             code: 200,
             uwid: uwid
+        }));
+        multi.exec((err: Error, _) => {
+          if (err) {
+            log.error(err, "update underwrite cache error");
+          }
+          done();
         });
-        multi.exec();
-        order_tirgger.send(msgpack.encode({uwid, underwrite}));
-    }, (e: Error) => {
-        cache.setex(args.callback, 30, {
+        order_trigger.send(msgpack.encode({uwid, underwrite}));
+    }).catch(error => {
+        cache.setex(args.callback, 30, JSON.stringify({
             code: 500,
-            msg: e.message
+            msg: error.message
+        }));
+        log.info("err" + error)
+    });
+});
+
+//修改预约验车地点
+processor.call("alterValidatePlace", (db:PGClient, cache: RedisClient, done: DoneFunction, args) => {
+    log.info("alterValidatePlace" + args);
+    let palert = new Promise<void>((resolve, reject) => {
+        db.query("UPDATE underwrites SET plan_time = $1, validate_place = $2, validate_update_time = $3, updated_at = $4 WHERE id = $5 ", [args.plan_time, args.validate_place, args.validate_update_time, args.validate_update_time, args.uwid], (err: Error) => {
+            if (err) {
+                log.info("err" + err)
+                reject(err);
+            } else {
+                log.info("success")
+                resolve();
+            }
         });
+    });
+    palert.then((resolve) => {
+        log.info("palert")
+        let underwrite = null;
+        let uwid = args.uwid;
+        cache.hget("underwrite-entities", args.uwid, function(err, result) {
+          log.info("result----------" +result);
+          if (err){
+            log.info("err" + err);
+          } else if (result){
+            underwrite = result;
+          } else {
+            log.info("Not found result");
+          }
+        });
+        if (underwrite != null) {
+          log.info("--------------11111111-----------------------");
+          underwrite["plan_time"] = args.plan_time;
+          underwrite["validate_place"] = args.validate_place;
+          underwrite["validate_update_time"] = args.validate_update_time;
+          underwrite["updated_at"] = args.validate_update_time;
+          log.info("--------------------------" + underwrite + "---------------------");
+          let multi = cache.multi();
+          multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+          multi.setex(args.callback, 30, JSON.stringify({
+              code: 200,
+              uwid: uwid
+          }));
+          multi.exec((err: Error, _) => {
+            if (err) {
+              log.error(err, "update underwrite cache error");
+            }
+            done();
+          });
+        }
+        order_trigger.send(msgpack.encode({uwid, underwrite}));
+    }).catch(error => {
+        cache.setex(args.callback, 30, JSON.stringify({
+            code: 500,
+            msg: error.message
+        }));
+        log.info("err" + error)
     });
 });
 
 processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done:DoneFunction, args) => {
    log.info("fillUnderwrite args is " + args); 
    let pfill = new Promise<void>((resolve, reject) => {
-       db.query("INSERT INTO underwrite (real_place, operator, certificate_state, problem_type, problem_description) VALUES ($1, $2, $3, $4, $5) WHERE id = $6", [args.real_place, args.operator, args.certificate_state, args.problem_type, args.problem_description, args.uwid], (err:Error) => {
+       db.query("ALERT underwrite SET real_place = $1, real_update_time = $2, operator = $3, certificate_state = $4, problem_type = $5, problem_description = $6, updated_at = $7, WHERE id = $8", [args.real_place, args.update_time, args.operator, args.certificate_state, args.problem_type, args.problem_description, args.update_time, args.uwid], (err:Error) => {
            if (err) {
-                reject (err);
+                reject(err);
             } else {
                 resolve();
             }
        });
    });
-   async_serial<void>(pfill, [], () => {
-       let multi = cache.multi();
-       let underwrite = {}
-       redis.hget("underwrite-entities", args.uwid, function(err, result) {
-           underwrite = result;
-           underwrite["real_place"] = args.real_place;
-           underwrite["operator"] = args.operator;
-           underwrite["certificate_state"] = args.certificate_state;
-           underwrite["problem_type"] = args.problem_type;
-           underwrite["problem_description"] = args.problem_description;
-       });
-       redis.hset("underwrite-entities", args.uwid, underwrite, function(err, result) {
-           if(err){
-               log.info("err: " + err)
-           }
-       });
-       let uwid = args.uwid;
-       order_tirgger.send(msgpack.encode({uwid, underwrite}));
-   }, (e: Error) => {
-        cache.setex(args.callback, 30, {
-            code: 500,
-            msg: e.message
+  pfill.then((resolve) => {
+        log.info("pfill")
+        let underwrite = null;
+        let uwid = args.uwid;
+        cache.hget("underwrite-entities", args.uwid, function(err, result) {
+          log.info("result----------" +result);
+          if (err){
+            log.info("err" + err);
+          } else if (result){
+            underwrite = result;
+          } else {
+            log.info("Not found result");
+          }
         });
+        if (underwrite != null) {
+          log.info("--------------11111111-----------------------");
+          underwrite["real_place"] = args.real_place;
+          underwrite["real_update_time"] = args.real_update_time;
+          underwrite["operator"] = args.operator;
+          underwrite["certificate_state"] = args.certificate_state;
+          underwrite["problem_type"] = args.problem_type;
+          underwrite["problem_description"] = args.problem_description;
+          underwrite["update_time"] = args.update_time;
+          log.info("--------------------------" + underwrite + "---------------------");
+          let multi = cache.multi();
+          multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+          multi.setex(args.callback, 30, JSON.stringify({
+              code: 200,
+              uwid: uwid
+          }));
+          multi.exec((err: Error, _) => {
+            if (err) {
+              log.error(err, "update underwrite cache error");
+            }
+            done();
+          });
+        }
+        order_trigger.send(msgpack.encode({uwid, underwrite}));
+    }).catch(error => {
+        cache.setex(args.callback, 30, JSON.stringify({
+            code: 500,
+            msg: error.message
+        }));
+        log.info("err" + error)
     });
 });
 
