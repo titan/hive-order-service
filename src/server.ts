@@ -107,13 +107,19 @@ svc.call('getOrders', permissions, (ctx: Context, rep: ResponseFunction, offset:
 });
 //查看订单状态
 svc.call('getOrderState', permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string) => {
-  // http://redis.io/commands/smembers
   log.info('getorderstate');
   redis.hget(order_vid + vid, qid, function (err, result) {
+    log.info('===========' + result);
     if (err || result == null) {
       rep({ code: 500, state: "not found" });
     } else {
-      rep(JSON.parse(result));
+      redis.hget(order_entities, result, function (err1, result1) {
+        if (err) {
+          log.info(err + 'get order_entities err in getOrderState');
+        } else {
+          rep(JSON.parse(result1));
+        }
+      });
     }
   });
 });
@@ -142,7 +148,8 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
 svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
   let uid = ctx.uid;
   let order_id = uuid.v1();
-  let args = { uid, order_id, vid, plans, qid, pmid, service_ratio, summary, payment, v_value, expect_at };
+  let domain = ctx.domain;
+  let args = { domain, uid, order_id, vid, plans, qid, pmid, service_ratio, summary, payment, v_value, expect_at };
   log.info('placeplanorder %j', args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
   rep({ status: "okay", order_id: order_id });
@@ -176,188 +183,192 @@ svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, 
 
 //生成核保
 svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, oid: string, plan_time: any, validate_place: string) => {
-    log.info("createUnderwrite uuid is " + ctx.uid);
-    let validate_update_time = new Date();
-    let uwid = uuid.v1();
-    let callback = uuid.v1();
-    let args = {uwid, oid, plan_time, validate_place, validate_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "createUnderwrite", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+  log.info("createUnderwrite uuid is " + ctx.uid);
+  let validate_update_time = new Date();
+  let uwid = uuid.v1();
+  let callback = uuid.v1();
+  let args = { uwid, oid, plan_time, validate_place, validate_update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "createUnderwrite", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //修改预约验车地点
-svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, plan_time:any, validate_place: string) => {
-    log.info("alterValidatePlace uuid is " + ctx.uid);
-    let validate_update_time = new Date();
-    let callback = uuid.v1();
-    let args = {uwid, plan_time, validate_place, validate_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "alterValidatePlace", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, plan_time: any, validate_place: string) => {
+  log.info("alterValidatePlace uuid is " + ctx.uid);
+  let validate_update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, plan_time, validate_place, validate_update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "alterValidatePlace", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, real_place: string, operator: string, certificate_state: number, problem_type: any, problem_description: any, photos: any) => {
-    log.info("fillUnderwrite uuid is " + ctx.uid);
-    let update_time = new Date();
-    let callback = uuid.v1();
-    let args = {uwid, real_place, update_time, operator, certificate_state, problem_type, problem_description, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, operator: string, certificate_state: number, problem_type: any, problem_description: any, photos: any) => {
+  log.info("fillUnderwrite uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, real_place, update_time, operator, certificate_state, problem_type, problem_description, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //提交审核结果
-svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, underwrite_result: string, result_update_time: any) => {
-    log.info("submitUnderwriteResult uuid is " + ctx.uid);
-    let callback = uuid.v1();
-    let args = {uwid, underwrite_result, result_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, underwrite_result: string) => {
+  log.info("submitUnderwriteResult uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, underwrite_result, update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //修改审核结果
-svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, underwrite_result: string, result_update_time: any) => {
-    log.info("alterUnderwriteResult uuid is " + ctx.uid);
-    let callback = uuid.v1();
-    let args = {uwid, underwrite_result, result_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "alterUnderwriteResult", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, underwrite_result: string) => {
+  log.info("alterUnderwriteResult uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, underwrite_result, update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "alterUnderwriteResult", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //修改实际验车地点
-svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, real_place: string, real_update_time: any) => {
-    log.info("alterRealPlace uuid is " + ctx.uid);
-    let callback = uuid.v1();
-    let args = {uwid, real_place, real_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "alterRealPlace", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string) => {
+  log.info("alterRealPlace uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, real_place, update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "alterRealPlace", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //修改备注
-svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid:string, note: string, note_update_time: any) => {
-    log.info("alterNote uuid is " + ctx.uid);
-    let callback = uuid.v1();
-    let args = {uwid, note, note_update_time, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, note: string) => {
+  log.info("alterNote uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, note, update_time, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //上传现场图片
 svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, photo: string) => {
-    log.info("uploadPhotos uuid is " + ctx.uid);
-    let callback = uuid.v1();
-    let args = {uwid, photo, callback};
-    log.info("args: " + args);
-    ctx.msgqueue.send(msgpack.encode({ cmd: "uploadPhotos", args: args}));
-    wait_for_response(ctx.cache, callback, rep);
+  log.info("uploadPhotos uuid is " + ctx.uid);
+  let update_time = new Date();
+  let callback = uuid.v1();
+  let args = { uwid, photo, callback };
+  log.info("args: " + args);
+  ctx.msgqueue.send(msgpack.encode({ cmd: "uploadPhotos", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 //根据订单编号得到核保信息
 svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: ResponseFunction, oid: string) => {
-    log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
-    let order_info = null;
-    redis.hget("order-entities", oid, function (err, result) {
-        if (err) {
+  log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
+  let order_info = null;
+  redis.hget("order-entities", oid, function (err, result) {
+    if (err) {
+      rep([]);
+    } else {
+      if (result != null) {
+        order_info = JSON.parse(result);
+        let order_id = order_info.order_id;
+        redis.hget("underwrite-entities", order_id, function (err2, result2) {
+          if (err2) {
             rep([]);
-        } else {
-            if (result != null) {
-                order_info = JSON.parse(result);
-                let order_id = order_info.order_id;
-                redis.hget("underwrite-entities", order_id, function (err2, result2) {
-                    if (err2) {
-                        rep([]);
-                    } else {
-                        if (result2 !=null){
-                            rep(JSON.parse(result2));
-                        } else {
-                            rep({ code: 404, msg: "Not Found Underwrite" });
-                        }
-                    }
-                });
+          } else {
+            if (result2 != null) {
+              rep(JSON.parse(result2));
             } else {
-                rep({ code: 404, msg: "Not Found Order" });
+              rep({ code: 404, msg: "Not Found Underwrite" });
             }
-        }
-    });
+          }
+        });
+      } else {
+        rep({ code: 404, msg: "Not Found Order" });
+      }
+    }
+  });
 });
 
 //根据订单号得到核保信息
 svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
-    log.info("getUnderwriteByOrderId uuid is " + ctx.uid);
-    redis.zrange("underwrite", 0, -1, function (err, result) {
-      if(result) {
-        let multi = redis.multi();
-        for(let uwid of result) {
-          multi.hget("underwrite-entities", uwid)
-        }
-        multi.exec((err2, result2) => {
-          if(result2) {
-            let uwinfo = null;
-            result2.map(underwrite => {
-              if(JSON.parse(underwrite).order_id === order_id){
-                uwinfo = JSON.parse(underwrite);
-              }
-            });
-            if (uwinfo == null) {
-              rep({
-                code: 404,
-                msg: "Not found underwrite"
-              });
-            } else {
-              rep(uwinfo);
+  log.info("getUnderwriteByOrderId uuid is " + ctx.uid);
+  redis.zrange("underwrite", 0, -1, function (err, result) {
+    if (result) {
+      let multi = redis.multi();
+      for (let uwid of result) {
+        multi.hget("underwrite-entities", uwid)
+      }
+      multi.exec((err2, result2) => {
+        if (result2) {
+          let uwinfo = null;
+          result2.map(underwrite => {
+            if (JSON.parse(underwrite).order_id === order_id) {
+              uwinfo = JSON.parse(underwrite);
             }
-          } else if (err2) {
-            rep({
-              code: 500,
-              msg: err2.message
-            });
-          } else {
+          });
+          if (uwinfo == null) {
             rep({
               code: 404,
-              msg: "Not found underwrites"
+              msg: "Not found underwrite"
             });
+          } else {
+            rep(uwinfo);
           }
-        });
-      } else if (err) {
-        rep({
-          code: 500,
-          msg: err.message
-        });
-      } else {
-        rep({
-          code: 404,
-          msg: "Not found underwrites"
-        });
-      }
-    });
+        } else if (err2) {
+          rep({
+            code: 500,
+            msg: err2.message
+          });
+        } else {
+          rep({
+            code: 404,
+            msg: "Not found underwrites"
+          });
+        }
+      });
+    } else if (err) {
+      rep({
+        code: 500,
+        msg: err.message
+      });
+    } else {
+      rep({
+        code: 404,
+        msg: "Not found underwrites"
+      });
+    }
+  });
 });
 
-//根据订单编号得到核保信息
+//根据核保号得到核保信息
 svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunction, uwid: string) => {
-    log.info("getUnderwriteByUWId uuid is " + ctx.uid + "uwid is " + uwid);
-    let order_info = null;
-    redis.hget("underwrite-entities", uwid, function (err, result) {
-      log.info("result----------------" + result);
-      if(result) {
-        rep(JSON.parse(result));
-      } else if (err) {
-        rep({
-          code: 500,
-          msg: err.message
-        });
-      } else {
-         rep({
-          code: 404,
-          msg: "Not found underwrites"
-        });   
-      }
-    });
+  log.info("getUnderwriteByUWId uuid is " + ctx.uid + "uwid is " + uwid);
+  let order_info = null;
+  redis.hget("underwrite-entities", uwid, function (err, result) {
+    if (result) {
+      rep(JSON.parse(result));
+    } else if (err) {
+      rep({
+        code: 500,
+        msg: err.message
+      });
+    } else {
+      rep({
+        code: 404,
+        msg: "Not found underwrites"
+      });
+    }
+  });
 });
 
 console.log('Start service at ' + config.svraddr);
