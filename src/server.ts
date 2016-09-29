@@ -45,13 +45,14 @@ let config: Config = {
 let svc = new Server(config);
 
 let permissions: Permission[] = [['mobile', true], ['admin', true]];
+
 // 获取所有订单
 svc.call('getAllOrders', permissions, (ctx: Context, rep: ResponseFunction, start: string, limit: string) => {
   // http://redis.io/commands/smembers
   log.info('getallorder');
   redis.zrevrange(order_key, start, limit, function (err, result) {
     if (err) {
-      rep([]);
+      rep({code:500, state: err});
     } else {
       let multi = redis.multi();
       for (let id of result) {
@@ -59,7 +60,7 @@ svc.call('getAllOrders', permissions, (ctx: Context, rep: ResponseFunction, star
       }
       multi.exec((err, result2) => {
         if (err) {
-          rep([]);
+          rep({code:500, state: err});
         } else {
           rep(result2.map(e => JSON.parse(e)));
         }
@@ -73,7 +74,7 @@ svc.call('getOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id
   log.info('getorder');
   redis.hget(order_entities, order_id, function (err, result) {
     if (err) {
-      rep([]);
+      rep({code:500, state: err});
     } else {
       rep(JSON.parse(result));
     }
@@ -88,7 +89,7 @@ svc.call('getOrders', permissions, (ctx: Context, rep: ResponseFunction, offset:
     if (err) {
       log.info('get redis error in getorders');
       log.info(err);
-      rep([]);
+      rep({code:500, state: err});
     } else {
       let multi = redis.multi();
       for (let order_key of result) {
@@ -114,8 +115,9 @@ svc.call('getOrderState', permissions, (ctx: Context, rep: ResponseFunction, vid
       rep({ code: 500, state: "not found" });
     } else {
       redis.hget(order_entities, result, function (err1, result1) {
-        if (err) {
+        if (err || result1 == null) {
           log.info(err + 'get order_entities err in getOrderState');
+          rep({ code: 500 });
         } else {
           rep(JSON.parse(result1));
         }
@@ -133,7 +135,7 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
     if (err) {
       log.info('get redis error in getDriverOrders');
       log.info(err);
-      rep([]);
+      rep({code:500, state: err});
     } else {
       log.info('replies==========' + result);
       rep(JSON.parse(result));
@@ -141,18 +143,17 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
   });
 });
 
-
-
-
 // 下计划单
-svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
+svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion:number, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
   let uid = ctx.uid;
+  let callback = uuid.v1();
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = { domain, uid, order_id, vid, plans, qid, pmid, service_ratio, summary, payment, v_value, expect_at };
+  let args = { domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback };
   log.info('placeplanorder %j', args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
-  rep({ status: "okay", order_id: order_id });
+  rep({ code: 200, order_id: order_id });
+  // wait_for_response(ctx.cache, callback, rep);
 });
 // 下司机单
 svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: string, payment: string) => {
@@ -160,7 +161,7 @@ svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction
   let uid = ctx.uid;
   let args = { uid, vid, dids, summary, payment };
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
-  rep({ status: "okay" });
+  rep({ code: 200 });
 });
 
 // 下第三方订单
@@ -169,7 +170,7 @@ svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, 
   let uid = ctx.uid;
   let args = { uid, vid, qid, items, summary, payment };
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-  rep({ status: "okay" });
+  rep({ code: 200 });
 });
 
 // 更改订单状态
@@ -178,7 +179,7 @@ svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, 
   let args = { uid, order_id, state_code, state };
   log.info('updateOrderState', args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
-  rep({ status: "okay" });
+  rep({ status: 200 });
 });
 
 //生成核保

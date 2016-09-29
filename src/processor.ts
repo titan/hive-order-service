@@ -88,7 +88,7 @@ function insert_plan_order_recursive(db, done, order_id, args1, pids, acc/* plan
   } else {
     let ext_id = uuid.v1();
     let pid = pids.shift();
-    db.query('INSERT INTO plan_order_ext(oid, pmid, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6)', [order_id, args1.pmid, pid, args1.qid, args1.service_ratio, args1.expect_at], (err: Error, result: ResultSet) => {
+    db.query('INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6,$7)', [order_id, args1.pmid, args1.promotion, pid, args1.qid, args1.service_ratio, args1.expect_at], (err: Error, result: ResultSet) => {
       if (err) {
         log.info(err);
         db.query('ROLLBACK', [], (err: Error) => {
@@ -259,12 +259,17 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                               multi.zadd("orders-" + args1.uid, created_at, order_id);
                               multi.hset("order-vid-" + args1.vid, args1.qid, order_id);
                               multi.hset("order-entities", order_id, JSON.stringify(order));
+                              // multi.setex(args1.callback, 30, JSON.stringify({
+                              //   code: 200,
+                              //   order_id: order_id
+                              // }));
                               multi.exec((err3, replies) => {
                                 if (err3) {
                                   log.error(err3, 'query redis error');
                                 } else {
                                   log.info("placeAnOrder:===================is done")
                                   done(); // close db and cache connection
+
                                 }
                               });
                             });
@@ -442,7 +447,7 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
         done();
         return;
       }
-      db.query('INSERT INTO order_items(item_id, piid, price) VALUES($1,$2,$3,$4)', [item_id, piid, args3.items["piid"]], (err: Error, result: ResultSet) => {
+      db.query('INSERT INTO order_items(item_id, piid, price) VALUES($1,$2,$3)', [item_id, piid, args3.items["piid"]], (err: Error, result: ResultSet) => {
         if (err) {
           log.error(err, 'query error');
           done();
@@ -590,12 +595,12 @@ processor.call("alterValidatePlace", (db: PGClient, cache: RedisClient, done: Do
 processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, args) => {
   log.info("fillUnderwrite args is " + args);
   function insert_photo_recur(photos: Object[], acc: Object[], cb) {
-    if (photos.length == 0){
+    if (photos.length == 0) {
       cb(acc);
     } else {
       let photo = photos.shift();
       let upid = uuid.v1();
-      db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, photo], (err:Error) => {
+      db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, photo], (err: Error) => {
         if (err) {
           log.error(err, 'query error');
           insert_photo_recur([], acc, cb);
@@ -634,7 +639,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
     insert_photo_recur(args.photos, null, (cb) => {
       if (cb != null) {
         resolve(cb);
-      } else {  
+      } else {
         reject();
       }
     });
@@ -952,7 +957,7 @@ processor.call("uploadPhotos", (db: PGClient, cache: RedisClient, done: DoneFunc
   log.info("uploadPhotos " + args);
   let upid = uuid.v1();
   let pupload = new Promise<void>((resolve, reject) => {
-    db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, args.photo], (err:Error) => {
+    db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, args.photo], (err: Error) => {
       if (err) {
         reject(err);
       } else {
