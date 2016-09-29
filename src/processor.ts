@@ -251,7 +251,7 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                               let created_at1 = getLocalTime(created_at / 1000);
                               let orders = [order_id, args1.expect_at];
                               let order = {
-                                summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, p_price: args1.pmid, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle, created_at: created_at1
+                                summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, p_price: args1.promotion, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle, created_at: created_at1
                               };
                               let multi = cache.multi();
                               multi.zadd("plan-orders", created_at, order_id);
