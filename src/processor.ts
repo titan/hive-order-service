@@ -771,11 +771,19 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
         multi.exec((err: Error, _) => {
           if (err) {
             log.error(err, "update underwrite cache error");
+            cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: "update underwrite cache error"
+          }));
           }
           underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
           done();
         });
       } else {
+        cache.setex(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: "Not found underwrite"
+        }));
         log.info("Not found underwrite");
         done();
       }

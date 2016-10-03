@@ -5,7 +5,7 @@ import * as nanomsg from "nanomsg";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
-import { verify, uuidVerifier, stringVerifier } from "hive-verify";
+import { verify, uuidVerifier, stringVerifier, numberVerifier, arrayVerify } from "hive-verify";
 
 let log = bunyan.createLogger({
   name: "order-server",
@@ -207,6 +207,14 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
 // 生成核保
 svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, oid: string, plan_time: any, validate_place: string) => {
   log.info("createUnderwrite uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("oid", oid), stringVerifier("validate_place", validate_place)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let validate_update_time = new Date();
   let uwid = uuid.v1();
   let callback = uuid.v1();
@@ -219,6 +227,14 @@ svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, 
 // 修改预约验车地点
 svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, plan_time: any, validate_place: string) => {
   log.info("alterValidatePlace uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("validate_place", validate_place)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let validate_update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, plan_time, validate_place, validate_update_time, callback };
@@ -228,8 +244,16 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 // 工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: any, note:string, photos: any) => {
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note:string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), arrayVerify("problem_type", problem_type), stringVerifier("problem_description", problem_description), stringVerifier("note", note), arrayVerify("photos", photos)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let domain = ctx.domain;
@@ -258,6 +282,14 @@ svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uw
 // 提交审核结果
 svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, underwrite_result: string) => {
   log.info("submitUnderwriteResult uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("underwrite_result", underwrite_result)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, underwrite_result, update_time, callback };
@@ -269,6 +301,14 @@ svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunc
 // 修改审核结果
 svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, underwrite_result: string) => {
   log.info("alterUnderwriteResult uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("underwrite_result", underwrite_result)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, underwrite_result, update_time, callback };
@@ -280,6 +320,14 @@ svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunct
 // 修改实际验车地点
 svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string) => {
   log.info("alterRealPlace uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("real_place", real_place)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, real_place, update_time, callback };
@@ -291,6 +339,14 @@ svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uw
 // 修改备注
 svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, note: string) => {
   log.info("alterNote uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("note", note)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, note, update_time, callback };
@@ -302,6 +358,14 @@ svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: s
 // 上传现场图片
 svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, photo: string) => {
   log.info("uploadPhotos uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("uwid", uwid), stringVerifier("photo", photo)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let update_time = new Date();
   let callback = uuid.v1();
   let args = { uwid, photo, callback };
@@ -313,6 +377,14 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
 // 根据订单编号得到核保信息
 svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: ResponseFunction, oid: string) => {
   log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("oid", oid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.zrange("orders", 0, -1, function(err, result) {
     if (result) {
       let multi = ctx.cache.multi();
@@ -380,6 +452,14 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
 // 根据订单号得到核保信息
 svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
   log.info("getUnderwriteByOrderId uuid is " + ctx.uid);
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.zrange("underwrite", 0, -1, function(err, result) {
     if (result) {
       let multi = ctx.cache.multi();
@@ -431,6 +511,14 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
 // 根据核保号得到核保信息
 svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunction, uwid: string) => {
   log.info("getUnderwriteByUWId uuid is " + ctx.uid + "uwid is " + uwid);
+  if (!verify([uuidVerifier("uwid", uwid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let order_info: any;
   ctx.cache.hget("underwrite-entities", uwid, function(err, result) {
     if (result) {
