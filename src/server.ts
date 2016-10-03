@@ -228,27 +228,26 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 // 工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction) => {
-  // , uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: any, note:string, photos: any
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: any, note:string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
   let update_time = new Date();
   let callback = uuid.v1();
   let domain = ctx.domain;
-  let uwid = "b2288950-8849-11e6-86a9-8d3457e084f0";
-  let real_place = "北京市东城区东直门东方银座23d";
-  let opid = "bcd9fcc0-882c-11e6-b850-8774c85fe33c";
-  let certificate_state = 0;
-  let problem_type = ["剐蹭", "调漆"];
-  let problem_description = "追尾。。。。";
-  let note = "你问我撞不撞，我当然要撞了.";
-  let photos = [
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
-    "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
-  ];
+  // let uwid = "b2288950-8849-11e6-86a9-8d3457e084f0";
+  // let real_place = "北京市东城区东直门东方银座23d";
+  // let opid = "bcd9fcc0-882c-11e6-b850-8774c85fe33c";
+  // let certificate_state = 0;
+  // let problem_type = ["剐蹭", "调漆"];
+  // let problem_description = "追尾。。。。";
+  // let note = "你问我撞不撞，我当然要撞了.";
+  // let photos = [
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+  //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
+  // ];
 
   let args = { domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback };
   log.info("args: " + args);

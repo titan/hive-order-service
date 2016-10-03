@@ -146,9 +146,9 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
       acc.push(val);
       async_serial_driver(ps, acc, cb);
     })
-    .catch(e => {
-      async_serial_driver(ps, acc, cb);
-    });
+      .catch(e => {
+        async_serial_driver(ps, acc, cb);
+      });
   }
 }
 processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, args1) => {
@@ -615,7 +615,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
   promises.push(pcommit);
   let predis = new Promise<Object>((resolve, reject) => {
     let uwid = args.uwid;
-    cache.hget("underwrite-entities", args.uwid, function(err, result) {
+    cache.hget("underwrite-entities", args.uwid, function (err, result) {
       if (result) {
         let underwrite = JSON.parse(result);
         resolve(underwrite);
@@ -629,7 +629,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
   });
   async_serial<void>(promises, [], () => {
     let uwid = args.uwid;
-    cache.hget("underwrite-entities", args.uwid, function(err, result) {
+    cache.hget("underwrite-entities", args.uwid, function (err, result) {
       if (result) {
         let underwrite = JSON.parse(result);
         underwrite.real_place = args.real_place;
@@ -745,49 +745,49 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
       }
     });
   })
-  .then(() => {
-    return new Promise<Object>((resolve, reject) => {
-      log.info("redis " + uwid);
-      cache.hget("underwrite-entities", uwid, function(err, result) {
-        if (result) {
-          resolve(JSON.parse(result));
-        } else if (err) {
-          reject(err);
-        } else {
-          resolve(null);
-        }
+    .then(() => {
+      return new Promise<Object>((resolve, reject) => {
+        log.info("redis " + uwid);
+        cache.hget("underwrite-entities", uwid, function (err, result) {
+          if (result) {
+            resolve(JSON.parse(result));
+          } else if (err) {
+            reject(err);
+          } else {
+            resolve(null);
+          }
+        });
       });
-    });
-  })
-  .then((underwrite: Object) => {
-    if (underwrite != null) {
-      let uw = cb(underwrite);
-      let multi = cache.multi();
-      multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
-      multi.setex(cbflag, 30, JSON.stringify({
-        code: 200,
-        uwid: uwid
-      }));
-      multi.exec((err: Error, _) => {
-        if (err) {
-          log.error(err, "update underwrite cache error");
-        }
-        underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+    })
+    .then((underwrite: Object) => {
+      if (underwrite != null) {
+        let uw = cb(underwrite);
+        let multi = cache.multi();
+        multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
+        multi.setex(cbflag, 30, JSON.stringify({
+          code: 200,
+          uwid: uwid
+        }));
+        multi.exec((err: Error, _) => {
+          if (err) {
+            log.error(err, "update underwrite cache error");
+          }
+          underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+          done();
+        });
+      } else {
+        log.info("Not found underwrite");
         done();
-      });
-    } else {
-      log.info("Not found underwrite");
+      }
+    })
+    .catch(error => {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: error.message
+      }));
+      log.info("err" + error);
       done();
-    }
-  })
-  .catch(error => {
-    cache.setex(cbflag, 30, JSON.stringify({
-      code: 500,
-      msg: error.message
-    }));
-    log.info("err" + error);
-    done();
-  });
+    });
 }
 
 processor.run();
