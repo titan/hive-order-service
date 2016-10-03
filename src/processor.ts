@@ -163,7 +163,7 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
     if (err || !strNo) {
       log.info(err + 'cache incr err');
     } else {
-      let no: string = formatNum(strNo, 7);
+      let no: string = formatNum(<string>strNo, 7);
       let date = new Date();
       let year = date.getFullYear();
       let pids = [];
@@ -249,15 +249,18 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                               log.info(plan_items + '111111111111111========================');
                               let created_at = new Date().getTime();
                               let created_at1 = getLocalTime(created_at / 1000);
+                              let start_at = null;
                               let orders = [order_id, args1.expect_at];
                               let order = {
-                                summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, p_price: args1.promotion, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle, created_at: created_at1
+                                summary: args1.summary, state: state, payment: args1.payment, v_value: args1.v_value, p_price: args1.promotion, stop_at: args1.stop, service_ratio: args1.service_ratio, plan: plans, items: items, expect_at: args1.expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at
                               };
                               let multi = cache.multi();
                               multi.zadd("plan-orders", created_at, order_id);
                               multi.zadd("orders", created_at, order_id);
                               multi.zadd("orders-" + args1.uid, created_at, order_id);
+                              multi.hset("orderNo-id", order_no, order_id);
                               multi.hset("order-vid-" + args1.vid, args1.qid, order_id);
+                              multi.hset("orderid-vid", order_id, args1.vid);
                               multi.hset("order-entities", order_id, JSON.stringify(order));
                               // multi.setex(args1.callback, 30, JSON.stringify({
                               //   code: 200,
@@ -322,11 +325,11 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
               return;
             } else {
               insert_driver_order_recursive(db, done, order_id, args2, args2.dids.map(did => did), {}, () => {
-                let p = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
+                let p = rpc(args2.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
                 let driver_promises = [];
                 for (let did of args2.dids) {
                   log.info('=================================did' + did);
-                  let p1 = rpc(args2.ctx.domain, hostmap.default["vehicle"], null, "getDriverInfos", args2.vid, did);
+                  let p1 = rpc(args2.domain, hostmap.default["vehicle"], null, "getDriverInfos", args2.vid, did);
                   driver_promises.push(p1);
                 }
                 p.then((vehicle) => {
@@ -366,42 +369,66 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
 });
 
 // 订单状态更新state_code state
+// 订单状态更新state_code state
 processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: DoneFunction, args4) => {
   log.info('updateOrderState');
+  // orderNo-id  
   let code = parseInt(args4.state_code, 10);
   db.query('UPDATE orders SET state_code = $1,state = $2 WHERE id = $3', [code, args4.state, args4.order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
       log.info('err,updateOrderState error');
       done();
-      return;
-    }
-    else {
-      let multi = cache.multi();
-      log.info(args4.order_id + '====================================');
-      multi.hget("order-entities", args4.order_id);
-      multi.exec((err, replise) => {
+    } else {
+      let p = rpc(args4.domain, hostmap.default["vehicle"], null, "getVehicleInfo", args4.vid);
+      p.then((vehicle) => {
         if (err) {
-          log.info('err,get redis error');
-          done();
-        } else {
-          log.info('================' + replise);
-          let order_entities = JSON.parse(replise);
-          log.info(order_entities);
-          order_entities["state_code"] = args4.state_code;
-          log.info("=============" + order_entities["state_code"]);
-          order_entities["state"] = args4.state;
-          log.info('=====================1321' + order_entities["state"]);
-          log.info('======================1111' + order_entities);
-          let multi = cache.multi();
-          multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities));
-          multi.exec((err, result1) => {
+          log.info("call vehicle error");
+        }
+        else {
+          let name = vehicle.owner.name;
+          let identity_no = vehicle.owner.identity_no;
+          let g_name: any;
+          let apportion: number = 0.20;
+          if (parseInt(identity_no.substr(16, 1)) % 2 == 1) {
+            g_name = name + "先生";
+          } else {
+            g_name = name + "女士";
+          }
+          let p1 = rpc(args4.domain, hostmap.default["group"], null, "createGroup", g_name, args4.vid, apportion, args4.uid);
+          p1.then((result2) => {
             if (err) {
-              log.info('err:hset order_entities error');
-              done();
+              log.info("call group error");
             } else {
-              log.info('db end in updateOrderState');
-              done();
+              let multi = cache.multi();
+              log.info(args4.order_id + '====================================');
+              multi.hget("order-entities", args4.order_id);
+              multi.exec((err, replise) => {
+                if (err) {
+                  log.info('err,get redis error');
+                  done();
+                } else {
+                  log.info('================' + replise);
+                  let order_entities = JSON.parse(replise);
+                  log.info(order_entities);
+                  order_entities["state_code"] = args4.state_code;
+                  log.info("=============" + order_entities["state_code"]);
+                  order_entities["state"] = args4.state;
+                  log.info('=====================1321' + order_entities["state"]);
+                  log.info('======================1111' + order_entities);
+                  let multi = cache.multi();
+                  multi.hset("order-entities", args4.order_id, JSON.stringify(order_entities));
+                  multi.exec((err, result1) => {
+                    if (err) {
+                      log.info('err:hset order_entities error');
+                      done();
+                    } else {
+                      log.info('db end in updateOrderState');
+                      done();
+                    }
+                  });
+                }
+              });
             }
           });
         }
@@ -594,32 +621,10 @@ processor.call("alterValidatePlace", (db: PGClient, cache: RedisClient, done: Do
 
 processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, args) => {
   log.info("fillUnderwrite args is " + args);
-  function insert_photo_recur(photos: Object[], acc: Object[], cb) {
-    if (photos.length == 0) {
-      cb(acc);
-    } else {
-      let photo = photos.shift();
-      let upid = uuid.v1();
-      db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, photo], (err: Error) => {
-        if (err) {
-          log.error(err, 'query error');
-          insert_photo_recur([], acc, cb);
-        } else {
-          let photo_entry = {
-            id: upid,
-            photo: args.photo,
-            created_at: args.update_time,
-            updated_at: args.update_time
-          }
-          acc.push(photo_entry);
-          insert_photo_recur(photos, acc, cb);
-        }
-      });
-    }
-  }
   let pbegin = new Promise<void>((resolve, reject) => {
     db.query("BEGIN", [], (err: Error) => {
       if (err) {
+        log.info(err);
         reject(err);
       } else {
         resolve();
@@ -627,32 +632,50 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
     });
   });
   let pfill = new Promise<void>((resolve, reject) => {
-    db.query("UPDATE underwrite SET real_place = $1, real_update_time = $2, operator = $3, certificate_state = $4, problem_type = $5, problem_description = $6, updated_at = $7, WHERE id = $8", [args.real_place, args.update_time, args.operator, args.certificate_state, args.problem_type, args.problem_description, args.update_time, args.uwid], (err: Error) => {
+    db.query("UPDATE underwrites SET real_place = $1, real_update_time = $2, opid = $3, certificate_state = $4, problem_type = $5, problem_description = $6, note = $7, note_update_time = $8, updated_at = $9 WHERE id = $10", [args.real_place, args.update_time, args.opid, args.certificate_state, args.problem_type, args.problem_description, args.note, args.update_time, args.update_time, args.uwid], (err: Error) => {
       if (err) {
-        reject(err);
-      } else {
-        resolve(null);
-      }
-    });
-  });
-  let pphoto = new Promise<void>((resolve, reject) => {
-    insert_photo_recur(args.photos, null, (cb) => {
-      if (cb != null) {
-        resolve(cb);
-      } else {
-        reject();
-      }
-    });
-  });
-  let pcommit = new Promise<void>((resolve, reject) => {
-    db.query("COMMIT", [], (err: Error) => {
-      if (err) {
+        log.info(err);
         reject(err);
       } else {
         resolve();
       }
     });
   });
+  let promises = [pbegin, pfill];
+  let photo_entities = [];
+  for (let photo of args.photos) {
+    let pphoto = new Promise<void>((resolve, reject) => {
+      let upid = uuid.v1();
+      db.query("INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, args.uwid, photo], (err: Error) => {
+        if (err) {
+          log.info('query error' + err);
+          reject(err);
+        } else {
+          let photo_entry = {
+            id: upid,
+            photo: photo,
+            created_at: args.update_time,
+            updated_at: args.update_time
+          }
+          photo_entities.push(photo_entry);
+          resolve();
+        }
+      });
+    });
+    promises.push(pphoto);
+  }
+  
+  let pcommit = new Promise<void>((resolve, reject) => {
+    db.query("COMMIT", [], (err: Error) => {
+      if (err) {
+        log.info(err);
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+  promises.push(pcommit);
   let predis = new Promise<void>((resolve, reject) => {
     let underwrite = null;
     let uwid = args.uwid;
@@ -661,43 +684,54 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
         underwrite = result;
         resolve(underwrite);
       } else if (err) {
+        log.info(err);
         reject(err);
       } else {
         resolve(null);
       }
     });
   });
-  async_serial<void>([pbegin, pfill, pphoto, pcommit, predis], [], (results) => {
-    let photos = results[2];
-    let underwrite = results[4];
+  promises.push(predis);
+  async_serial<void>(promises, [], (results) => {
+    let photos2 = photo_entities;
+    let underwrite = results[results.length-1];
     let uwid = args.uwid;
     if (underwrite != null) {
-      underwrite["real_place"] = args.real_place;
-      underwrite["real_update_time"] = args.real_update_time;
-      underwrite["operator"] = args.operator;
-      underwrite["certificate_state"] = args.certificate_state;
-      underwrite["problem_type"] = args.problem_type;
-      underwrite["problem_description"] = args.problem_description;
-      underwrite["update_time"] = args.update_time;
-      underwrite["photos"] = photos;
-      let multi = cache.multi();
-      multi.hset("underwrite-entities", uwid, underwrite);
-      multi.setex(args.callback, 30, JSON.stringify({
-        code: 200,
-        uwid: uwid
-      }));
-      multi.exec((err: Error, _) => {
-        if (err) {
-          log.error(err, "update underwrite cache error");
-        }
-        order_trigger.send(msgpack.encode({ uwid, underwrite }));
-        done();
-      });
+      // let operator = rpc(args.domain, servermap.default["operator"], null, "getOperatorInfo", args.opid);
+      // log.info("===================" + operator);
+      // operator.then((operator) => {
+        // log.info("-------operator----------" + operator);
+        underwrite = JSON.parse(underwrite);
+        underwrite.real_place = args.real_place;
+        underwrite.real_update_time = args.update_time;
+        underwrite.operator = args.opid;
+        underwrite.certificate_state = args.certificate_state;
+        underwrite.problem_type = args.problem_type;
+        underwrite.problem_description = args.problem_description;
+        underwrite.note = args.note;
+        underwrite.note_updat_time = args.update_time;
+        underwrite.update_time = args.update_time;
+        underwrite.photos = photos2;
+        let multi = cache.multi();
+        multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+        multi.setex(args.callback, 30, JSON.stringify({
+          code: 200,
+          uwid: uwid
+        }));
+        multi.exec((err: Error, _) => {
+          log.info("args.callback" + args.callback);
+          if (err) {
+            log.info(err);
+          }
+          order_trigger.send(msgpack.encode({ uwid, underwrite }));
+          done();
+        });
+      // });
     } else {
       log.info("Not found underwrite");
       done();
     }
-  }).catch(error => {
+  }, (e: Error) => {
     db.query("ROLLBACK", [], (err: Error) => {
       if (err) {
         log.error(err);
@@ -708,7 +742,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
       }));
       done();
     });
-    log.info("err" + error)
+    log.info("err" + e);
   });
 });
 
@@ -729,8 +763,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
     let underwrite = null;
     cache.hget("underwrite-entities", args.uwid, function (err, result) {
       if (result) {
-        underwrite = result;
-        resolve(underwrite);
+        resolve(result);
       } else if (err) {
         reject(err);
       } else {
@@ -742,11 +775,12 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
     let underwrite = results[1];
     let uwid = args.uwid;
     if (underwrite != null) {
-      underwrite["underwrite_result"] = args.underwrite_result;
-      underwrite["result_update_time"] = args.update_time;
-      underwrite["updated_at"] = args.update_time;
+      underwrite = JSON.parse(underwrite);
+      underwrite.underwrite_result = args.underwrite_result;
+      underwrite.result_update_time = args.update_time;
+      underwrite.updated_at = args.update_time;
       let multi = cache.multi();
-      multi.hset("underwrite-entities", uwid, underwrite);
+      multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
       multi.setex(args.callback, 30, JSON.stringify({
         code: 200,
         uwid: uwid

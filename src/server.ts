@@ -5,6 +5,7 @@ import * as msgpack from 'msgpack-lite';
 import * as bunyan from 'bunyan';
 import * as hostmap from './hostmap';
 import * as uuid from 'uuid';
+import { verify, uuidVerifier, stringVerifier } from "hive-verify";
 
 let log = bunyan.createLogger({
   name: 'order-server',
@@ -34,6 +35,8 @@ let orders = "orders-";
 let order_key = "orders";
 let driver_entities = "driver-entities-";
 let order_vid = "order-vid-";
+let orderNo_id = "orderNo-id";
+let orderid_vid = "orderid-vid";
 // let orders_key = "uid";
 
 let config: Config = {
@@ -45,6 +48,8 @@ let config: Config = {
 let svc = new Server(config);
 
 let permissions: Permission[] = [['mobile', true], ['admin', true]];
+let allowAll: Permission[] = [["mobile", true], ["admin", true]];
+let mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 
 // 获取所有订单
 svc.call('getAllOrders', permissions, (ctx: Context, rep: ResponseFunction, start: string, limit: string) => {
@@ -52,7 +57,7 @@ svc.call('getAllOrders', permissions, (ctx: Context, rep: ResponseFunction, star
   log.info('getallorder');
   redis.zrevrange(order_key, start, limit, function (err, result) {
     if (err) {
-      rep({code:500, state: err});
+      rep({ code: 500, state: err });
     } else {
       let multi = redis.multi();
       for (let id of result) {
@@ -60,7 +65,7 @@ svc.call('getAllOrders', permissions, (ctx: Context, rep: ResponseFunction, star
       }
       multi.exec((err, result2) => {
         if (err) {
-          rep({code:500, state: err});
+          rep({ code: 500, state: err });
         } else {
           rep(result2.map(e => JSON.parse(e)));
         }
@@ -74,7 +79,7 @@ svc.call('getOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id
   log.info('getorder');
   redis.hget(order_entities, order_id, function (err, result) {
     if (err) {
-      rep({code:500, state: err});
+      rep({ code: 500, state: err });
     } else {
       rep(JSON.parse(result));
     }
@@ -89,7 +94,7 @@ svc.call('getOrders', permissions, (ctx: Context, rep: ResponseFunction, offset:
     if (err) {
       log.info('get redis error in getorders');
       log.info(err);
-      rep({code:500, state: err});
+      rep({ code: 500, state: err });
     } else {
       let multi = redis.multi();
       for (let order_key of result) {
@@ -135,7 +140,7 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
     if (err) {
       log.info('get redis error in getDriverOrders');
       log.info(err);
-      rep({code:500, state: err});
+      rep({ code: 500, state: err });
     } else {
       log.info('replies==========' + result);
       rep(JSON.parse(result));
@@ -144,7 +149,7 @@ svc.call('getDriverOrders', permissions, (ctx: Context, rep: ResponseFunction, v
 });
 
 // 下计划单
-svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion:number, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
+svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
   let uid = ctx.uid;
   let callback = uuid.v1();
   let order_id = uuid.v1();
@@ -159,7 +164,8 @@ svc.call('placeAnPlanOrder', permissions, (ctx: Context, rep: ResponseFunction, 
 svc.call('placeAnDriverOrder', permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: string, payment: string) => {
   log.info('getDetail %j', dids);
   let uid = ctx.uid;
-  let args = { uid, vid, dids, summary, payment };
+  let domain = ctx.domain;
+  let args = { domain, uid, vid, dids, summary, payment };
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
   rep({ code: 200 });
 });
@@ -174,13 +180,32 @@ svc.call('placeAnSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, 
 });
 
 // 更改订单状态
-svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_id: any, state_code: string, state: string) => {
-  let uid = ctx.uid;
-  let args = { uid, order_id, state_code, state };
-  log.info('updateOrderState', args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
-  rep({ status: 200 });
+svc.call('updateOrderState', permissions, (ctx: Context, rep: ResponseFunction, order_no: any, state_code: string, state: string) => {
+  redis.hget(orderNo_id, order_no, function (err, result) {
+    if (err || result == null) {
+      log.info('get redis error in getDriverOrders');
+      log.info(err);
+      rep({ code: 404, state: "not found" });
+    } else {
+      let uid = ctx.uid;
+      let order_id = result;
+      redis.hget(orderid_vid, order_id, function (err1, result1) {
+        if (err || result1 == null) {
+          log.info('get redis error in get orderid_vid' + err1);
+          rep({ code: 404, state: "not found the vid" })
+        } else {
+          let vid = result1;
+          let domain = ctx.domain; log.info('==========' + result);
+          let args = { domain, uid, vid, order_id, state_code, state };
+          log.info('updateOrderState', args);
+          ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
+          rep({ code: 200 });
+        }
+      });
+    }
+  });
 });
+
 
 //生成核保
 svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, oid: string, plan_time: any, validate_place: string) => {
@@ -206,11 +231,29 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 //工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, operator: string, certificate_state: number, problem_type: any, problem_description: any, photos: any) => {
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction) => {
+  // , uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: any, note:string, photos: any
   log.info("fillUnderwrite uuid is " + ctx.uid);
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, real_place, update_time, operator, certificate_state, problem_type, problem_description, callback };
+  let domain = ctx.domain;
+  let uwid = "b2288950-8849-11e6-86a9-8d3457e084f0";
+  let real_place = "北京市东城区东直门东方银座23d";
+  let opid = "bcd9fcc0-882c-11e6-b850-8774c85fe33c";
+  let certificate_state = 0;
+  let problem_type =  [ "剐蹭", "调漆" ];
+  let problem_description =  "追尾。。。。";
+  let note = "你问我撞不撞，我当然要撞了.";
+  let photos = [
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg",
+        "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
+      ]                
+  
+  let args = { domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback };
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -274,28 +317,66 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
 //根据订单编号得到核保信息
 svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: ResponseFunction, oid: string) => {
   log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
-  let order_info = null;
-  redis.hget("order-entities", oid, function (err, result) {
-    if (err) {
-      rep([]);
-    } else {
-      if (result != null) {
-        order_info = JSON.parse(result);
-        let order_id = order_info.order_id;
-        redis.hget("underwrite-entities", order_id, function (err2, result2) {
-          if (err2) {
-            rep([]);
-          } else {
-            if (result2 != null) {
-              rep(JSON.parse(result2));
-            } else {
-              rep({ code: 404, msg: "Not Found Underwrite" });
-            }
-          }
-        });
-      } else {
-        rep({ code: 404, msg: "Not Found Order" });
+  redis.zrange("orders", 0, -1, function (err, result) {
+    if (result) {
+      let multi = redis.multi();
+      for (let orderid of result) {
+        multi.hget("order-entities", orderid);
       }
+      multi.exec((err2, result2) => {
+        if (result2) {
+          let orderid: any;
+          result2.map(order => {
+            if (JSON.parse(order).id === oid) {
+              orderid = JSON.parse(order).order_id;
+            }
+          });
+          if (orderid != null) {
+            redis.zrange("underwrite", 0, -1, function (err3, result3) {
+              if (result3) {
+                let multi = redis.multi();
+                for (let uwid of result3) {
+                  multi.hget("underwrite-entities", uwid);
+                }
+                multi.exec((err4, result4) => {
+                  if (result4) {
+                    let underWrite: any;
+                    result4.map(underwrite => {
+                      if (JSON.parse(underwrite).order_id == orderid) {
+                        log.info("underwrite" + JSON.parse(underwrite));
+                        underWrite = JSON.parse(underwrite);
+                      }
+                    });
+                    if (underWrite != null) {
+                      rep({ code: 200, underWrite: underWrite });
+                    } else {
+                      rep({ code: 404, msg: "Not Found underwrite" });
+                    }
+                  } else if (err4) {
+                    rep({ code: 500, msg: err4 });
+                  } else {
+                    rep({ code: 404, msg: "Not Found underwrite-entities" });
+                  }
+                });
+              } else if (err3) {
+                rep({ code: 500, msg: err3 });
+              } else {
+                rep({ code: 404, msg: "Not Found underwrites" });
+              }
+            });
+          } else {
+            rep({ code: 404, msg: "Cannot match orderid" });
+          }
+        } else if (err2) {
+          rep({ code: 500, msg: err });
+        } else {
+          rep({ code: 404, msg: "Not Found order-entities" });
+        }
+      });
+    } else if (err) {
+      rep({ code: 500, msg: err });
+    } else {
+      rep({ code: 404, msg: "Not Found orders" });
     }
   });
 });
@@ -311,7 +392,7 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
       }
       multi.exec((err2, result2) => {
         if (result2) {
-          let uwinfo = null;
+          let uwinfo: any;
           result2.map(underwrite => {
             if (JSON.parse(underwrite).order_id === order_id) {
               uwinfo = JSON.parse(underwrite);
@@ -354,7 +435,7 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
 //根据核保号得到核保信息
 svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunction, uwid: string) => {
   log.info("getUnderwriteByUWId uuid is " + ctx.uid + "uwid is " + uwid);
-  let order_info = null;
+  let order_info: any;
   redis.hget("underwrite-entities", uwid, function (err, result) {
     if (result) {
       rep(JSON.parse(result));
