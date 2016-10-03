@@ -1,19 +1,23 @@
-DISTDIR=./dist
+MODULE=order
 SRCDIR=./src
-SERVER=$(DISTDIR)/server.js
-PROCESSOR=$(DISTDIR)/processor.js
+DISTDIR=./dist
+SERVER=$(DISTDIR)/$(MODULE)-server.js
+PROCESSOR=$(DISTDIR)/$(MODULE)-processor.js
+TMPSERVER=$(DISTDIR)/server.js
+TMPPROCESSOR=$(DISTDIR)/processor.js
 NPM=npm
-
-NS = hive
-VERSION ?= 1.0.0
-
-REPO = order-service
 
 all: $(SERVER) $(PROCESSOR)
 
-$(SERVER) $(PROCESSOR): $(SRCDIR)/server.ts $(SRCDIR)/processor.ts
-	tsc || rm $(SERVER) $(PROCESSOR)
-	
+$(TMPSERVER) $(TMPPROCESSOR): $(SRCDIR)/server.ts $(SRCDIR)/processor.ts
+	tsc || rm $(TMPSERVER) $(TMPPROCESSOR)
+
+$(SERVER): $(TMPSERVER)
+	mv $< $@
+
+$(PROCESSOR): $(TMPPROCESSOR)
+	mv $< $@
+
 $(SRCDIR)/server.ts: node_modules typings
 $(SRCDIR)/processor.ts: node_modules typings
 
@@ -23,13 +27,7 @@ node_modules:
 typings:
 	typings install
 
-build: all
-	docker build -t $(NS)/$(REPO):$(VERSION) .
-
-rmi:
-	docker rmi $(NS)/$(REPO):$(VERSION)
-
 clean:
 	rm -rf $(DISTDIR)
 
-.PHONY: all build rmi clean
+.PHONY: all clean
