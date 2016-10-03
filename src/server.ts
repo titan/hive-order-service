@@ -5,7 +5,7 @@ import * as nanomsg from "nanomsg";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
-import { verify, uuidVerifier, stringVerifier, numberVerifier, arrayVerify } from "hive-verify";
+import { verify, uuidVerifier, stringVerifier, numberVerifier, arrayVerifier } from "hive-verify";
 
 let log = bunyan.createLogger({
   name: "order-server",
@@ -49,9 +49,17 @@ let allowAll: Permission[] = [["mobile", true], ["admin", true]];
 let mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 
 // 获取所有订单
-svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: string, limit: string) => {
+svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number) => {
   // http://redis.io/commands/smembers
   log.info("getallorder");
+  if (!verify([numberVerifier("start", start), numberVerifier("limit", limit)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.zrevrange(order_key, start, limit, function(err, result) {
     if (err) {
       rep({ code: 500, state: err });
@@ -74,6 +82,14 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
 svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
   // http://redis.io/commands/smembers
   log.info("getorder");
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.hget(order_entities, order_id, function(err, result) {
     if (err) {
       rep({ code: 500, state: err });
@@ -83,9 +99,17 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
   });
 });
 // 获取订单列表
-svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset: string, limit: string) => {
+svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset: number, limit: number) => {
   // http://redis.io/commands/smembers
   log.info("getorders");
+  if (!verify([numberVerifier("offset", offset), numberVerifier("limit", limit)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.zrange(orders + ctx.uid, offset, limit, function(err, result) {
     // log.info(result);
     if (err) {
@@ -111,6 +135,14 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
 // 查看订单状态
 svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string) => {
   log.info("getorderstate");
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.hget(order_vid + vid, qid, function(err, result) {
     log.info("===========" + result);
     if (err || result == null) {
@@ -133,6 +165,14 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
 svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   // http://redis.io/commands/smembers
   log.info("getorders");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   ctx.cache.hget(driver_entities, vid, function(err, result) {
     if (err) {
       log.info("get redis error in getDriverOrders");
@@ -146,7 +186,15 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
 });
 
 // 下计划单
-svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
+svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any) => {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("promotion", promotion), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let uid = ctx.uid;
   let callback = uuid.v1();
   let order_id = uuid.v1();
@@ -158,8 +206,16 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   // wait_for_response(ctx.cache, callback, rep);
 });
 // 下司机单
-svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: string, payment: string) => {
+svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: number, payment: number) => {
   log.info("getDetail %j", dids);
+  if (!verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let uid = ctx.uid;
   let domain = ctx.domain;
   let args = { domain, uid, vid, dids, summary, payment };
@@ -168,8 +224,16 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 // 下第三方订单
-svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string, items: string[], summary: string, payment: string) => {
+svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string, items: string[], summary: number, payment: number) => {
   log.info("getDetail %j", ctx);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), arrayVerifier("items", items), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let uid = ctx.uid;
   let args = { uid, vid, qid, items, summary, payment };
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
@@ -246,7 +310,7 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 // 工作人员填充验车信息
 svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note:string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), arrayVerify("problem_type", problem_type), stringVerifier("problem_description", problem_description), stringVerifier("note", note), arrayVerify("photos", photos)], (errors: string[]) => {
+  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), arrayVerifier("problem_type", problem_type), stringVerifier("problem_description", problem_description), stringVerifier("note", note), arrayVerifier("photos", photos)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -274,7 +338,7 @@ svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uw
   // ];
 
   let args = { domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback };
-  log.info("args: " + args);
+  log.info("args: " + JSON.stringify(args));
   ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });
