@@ -4,10 +4,10 @@ import { createClient, RedisClient} from 'redis';
 import * as bunyan from 'bunyan';
 import * as uuid from 'uuid';
 import { servermap, triggermap } from "hive-hostmap";
-import * as hostmap from './hostmap';
 import * as msgpack from "msgpack-lite";
 import * as nanomsg from "nanomsg";
 import * as http from "http";
+
 let log = bunyan.createLogger({
   name: 'order-processor',
   streams: [
@@ -200,11 +200,11 @@ processor.call('placeAnPlanOrder', (db: PGClient, cache: RedisClient, done: Done
                   });
                 } else {
                   insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
-                    let p = rpc(args1.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args1.vid);
-                    let p2 = rpc(args1.domain, hostmap.default["quotation"], null, "getQuotation", args1.qid);
+                    let p = rpc(args1.domain, servermap["vehicle"], null, "getModelAndVehicleInfo", args1.vid);
+                    let p2 = rpc(args1.domain, servermap["quotation"], null, "getQuotation", args1.qid);
                     let plan_promises = [];
                     for (let pid of pids) {
-                      let p1 = rpc(args1.domain, hostmap.default["plan"], null, "getPlan", pid);
+                      let p1 = rpc(args1.domain, servermap["plan"], null, "getPlan", pid);
                       plan_promises.push(p1);
                     }
                     p.then((vehicle) => {
@@ -325,11 +325,11 @@ processor.call('placeAnDriverOrder', (db: PGClient, cache: RedisClient, done: Do
               return;
             } else {
               insert_driver_order_recursive(db, done, order_id, args2, args2.dids.map(did => did), {}, () => {
-                let p = rpc(args2.domain, hostmap.default["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
+                let p = rpc(args2.domain, servermap["vehicle"], null, "getModelAndVehicleInfo", args2.vid);
                 let driver_promises = [];
                 for (let did of args2.dids) {
                   log.info('=================================did' + did);
-                  let p1 = rpc(args2.domain, hostmap.default["vehicle"], null, "getDriverInfos", args2.vid, did);
+                  let p1 = rpc(args2.domain, servermap["vehicle"], null, "getDriverInfos", args2.vid, did);
                   driver_promises.push(p1);
                 }
                 p.then((vehicle) => {
@@ -664,7 +664,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
     });
     promises.push(pphoto);
   }
-  
+
   let pcommit = new Promise<void>((resolve, reject) => {
     db.query("COMMIT", [], (err: Error) => {
       if (err) {
@@ -694,38 +694,38 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
   promises.push(predis);
   async_serial<void>(promises, [], (results) => {
     let photos2 = photo_entities;
-    let underwrite = results[results.length-1];
+    let underwrite = results[results.length - 1];
     let uwid = args.uwid;
     if (underwrite != null) {
       // let operator = rpc(args.domain, servermap.default["operator"], null, "getOperatorInfo", args.opid);
       // log.info("===================" + operator);
       // operator.then((operator) => {
-        // log.info("-------operator----------" + operator);
-        underwrite = JSON.parse(underwrite);
-        underwrite.real_place = args.real_place;
-        underwrite.real_update_time = args.update_time;
-        underwrite.operator = args.opid;
-        underwrite.certificate_state = args.certificate_state;
-        underwrite.problem_type = args.problem_type;
-        underwrite.problem_description = args.problem_description;
-        underwrite.note = args.note;
-        underwrite.note_updat_time = args.update_time;
-        underwrite.update_time = args.update_time;
-        underwrite.photos = photos2;
-        let multi = cache.multi();
-        multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
-        multi.setex(args.callback, 30, JSON.stringify({
-          code: 200,
-          uwid: uwid
-        }));
-        multi.exec((err: Error, _) => {
-          log.info("args.callback" + args.callback);
-          if (err) {
-            log.info(err);
-          }
-          order_trigger.send(msgpack.encode({ uwid, underwrite }));
-          done();
-        });
+      // log.info("-------operator----------" + operator);
+      underwrite = JSON.parse(underwrite);
+      underwrite.real_place = args.real_place;
+      underwrite.real_update_time = args.update_time;
+      underwrite.operator = args.opid;
+      underwrite.certificate_state = args.certificate_state;
+      underwrite.problem_type = args.problem_type;
+      underwrite.problem_description = args.problem_description;
+      underwrite.note = args.note;
+      underwrite.note_updat_time = args.update_time;
+      underwrite.update_time = args.update_time;
+      underwrite.photos = photos2;
+      let multi = cache.multi();
+      multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+      multi.setex(args.callback, 30, JSON.stringify({
+        code: 200,
+        uwid: uwid
+      }));
+      multi.exec((err: Error, _) => {
+        log.info("args.callback" + args.callback);
+        if (err) {
+          log.info(err);
+        }
+        order_trigger.send(msgpack.encode({ uwid, underwrite }));
+        done();
+      });
       // });
     } else {
       log.info("Not found underwrite");
