@@ -5,7 +5,7 @@ import * as nanomsg from "nanomsg";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
-import { verify, uuidVerifier, stringVerifier, numberVerifier, arrayVerifier } from "hive-verify";
+import { verify, uuidVerifier, stringVerifier, numberVerifier} from "hive-verify";
 
 let log = bunyan.createLogger({
   name: "order-server",
@@ -60,7 +60,7 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
   })) {
     return;
   }
-  ctx.cache.zrevrange(order_key, start, limit, function(err, result) {
+  ctx.cache.zrevrange(order_key, start, limit, function (err, result) {
     if (err) {
       rep({ code: 500, state: err });
     } else {
@@ -90,7 +90,7 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
   })) {
     return;
   }
-  ctx.cache.hget(order_entities, order_id, function(err, result) {
+  ctx.cache.hget(order_entities, order_id, function (err, result) {
     if (err) {
       rep({ code: 500, state: err });
     } else {
@@ -110,7 +110,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
   })) {
     return;
   }
-  ctx.cache.zrange(orders + ctx.uid, offset, limit, function(err, result) {
+  ctx.cache.zrange(orders + ctx.uid, offset, limit, function (err, result) {
     // log.info(result);
     if (err) {
       log.info("get redis error in getorders");
@@ -125,7 +125,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         if (err2) {
           log.error(err2, "query error");
         } else {
-          log.info("replies==========" + replies);
+          // log.info("replies==========" + replies);
           rep(replies.map(e => JSON.parse(e)));
         }
       });
@@ -143,12 +143,12 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
   })) {
     return;
   }
-  ctx.cache.hget(order_vid + vid, qid, function(err, result) {
+  ctx.cache.hget(order_vid + vid, qid, function (err, result) {
     log.info("===========" + result);
     if (err || result == null) {
       rep({ code: 500, state: "not found" });
     } else {
-      ctx.cache.hget(order_entities, result, function(err1, result1) {
+      ctx.cache.hget(order_entities, result, function (err1, result1) {
         if (err || result1 == null) {
           log.info(err + "get order_entities err in getOrderState");
           rep({ code: 500 });
@@ -159,7 +159,6 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
     }
   });
 });
-
 
 // 获取驾驶人信息
 svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
@@ -173,7 +172,7 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
   })) {
     return;
   }
-  ctx.cache.hget(driver_entities, vid, function(err, result) {
+  ctx.cache.hget(driver_entities, vid, function (err, result) {
     if (err) {
       log.info("get redis error in getDriverOrders");
       log.info(err);
@@ -223,10 +222,10 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
   rep({ code: 200 });
 });
 
-// 下第三方订单
-svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string, items: string[], summary: number, payment: number) => {
-  log.info("getDetail %j", ctx);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), arrayVerifier("items", items), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+// 更改订单状态
+svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
+  log.info('updateSaleOrder %j', ctx);
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -235,28 +234,29 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
     return;
   }
   let uid = ctx.uid;
-  let args = { uid, vid, qid, items, summary, payment };
-  ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-  rep({ code: 200 });
+  let domain = ctx.domain;
+  let args = { uid, domain, order_id };
+  ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
+  rep({ code: 200, order_id: order_id });
 });
 
-// 更改订单状态
-svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, order_no: any, state_code: string, state: string) => {
-  ctx.cache.hget(orderNo_id, order_no, function(err, result) {
+//更新订单状态
+svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
+  ctx.cache.hget(orderNo_id, order_no, function (err, result) {
     if (err || result == null) {
       log.info("get redis error in getDriverOrders");
       log.info(err);
       rep({ code: 404, state: "not found" });
     } else {
-      let uid = ctx.uid;
       let order_id = result;
-      ctx.cache.hget(orderid_vid, order_id, function(err1, result1) {
+      ctx.cache.hget(orderid_vid, order_id, function (err1, result1) {
         if (err || result1 == null) {
           log.info("get redis error in get orderid_vid" + err1);
           rep({ code: 404, state: "not found the vid" });
         } else {
           let vid = result1;
-          let domain = ctx.domain; log.info("==========" + result);
+          let domain = ctx.domain;
+          log.info("==========" + result);
           let args = { domain, uid, vid, order_id, state_code, state };
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
@@ -267,6 +267,64 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
   });
 });
 
+// 下第三方订单
+svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid:string, qid: string, items: any, summary: number, payment: number) => {
+  log.info("placeAnSaleOrder %j", ctx);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  let uid = ctx.uid;
+  let order_id = uuid.v1();
+  let domain = ctx.domain;
+  let args = { uid, domain, order_id, vid,pid, qid, items, summary, payment };
+  ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
+  rep({ code: 200, order_id: order_id });
+});
+
+//修改第三方订单
+svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any) => {
+  log.info('updateSaleOrder %j', ctx);
+  let uid = ctx.uid;
+  let domain = ctx.domain;
+  let callback = uuid.v1();
+  let args = { uid, domain, order_id, items, callback };
+  ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
+});
+
+//根据vid获取第三方保险
+svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+  log.info("getorderstate");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("vehicle-order", vid, function (err, result) {
+    log.info("===========" + result);
+    if (err || result == null) {
+      log.info(err);
+      rep({ code: 500, state: "not found" });
+    } else {
+      ctx.cache.hget(order_entities, result, function (err1, result1) {
+        if (err || result1 == null) {
+          log.info(err + "get order_entities err in getOrderState");
+          rep({ code: 500, state: "not found" });
+        } else {
+          rep(JSON.parse(result1));
+        }
+      });
+    }
+  });
+});
 
 // 生成核保
 svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, oid: string, plan_time: any, validate_place: string) => {
@@ -308,9 +366,9 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 // 工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note:string, photos: any) => {
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note: string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), arrayVerifier("problem_type", problem_type), stringVerifier("problem_description", problem_description), stringVerifier("note", note), arrayVerifier("photos", photos)], (errors: string[]) => {
+  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), stringVerifier("problem_description", problem_description), stringVerifier("note", note)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -441,7 +499,7 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
 // 根据订单编号得到核保信息
 svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: ResponseFunction, oid: string) => {
   log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("oid", oid)], (errors: string[]) => {
+  if (!verify([stringVerifier("oid", oid)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -449,7 +507,7 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
   })) {
     return;
   }
-  ctx.cache.zrange("orders", 0, -1, function(err, result) {
+  ctx.cache.zrange("orders", 0, -1, function (err, result) {
     if (result) {
       let multi = ctx.cache.multi();
       for (let orderid of result) {
@@ -464,7 +522,7 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
             }
           });
           if (orderid != null) {
-            ctx.cache.zrange("underwrite", 0, -1, function(err3, result3) {
+            ctx.cache.zrange("underwrite", 0, -1, function (err3, result3) {
               if (result3) {
                 let multi = ctx.cache.multi();
                 for (let uwid of result3) {
@@ -524,7 +582,7 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
   })) {
     return;
   }
-  ctx.cache.zrange("underwrite", 0, -1, function(err, result) {
+  ctx.cache.zrange("underwrite", 0, -1, function (err, result) {
     if (result) {
       let multi = ctx.cache.multi();
       for (let uwid of result) {
@@ -584,7 +642,7 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
     return;
   }
   let order_info: any;
-  ctx.cache.hget("underwrite-entities", uwid, function(err, result) {
+  ctx.cache.hget("underwrite-entities", uwid, function (err, result) {
     if (result) {
       rep(JSON.parse(result));
     } else if (err) {
