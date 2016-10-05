@@ -222,19 +222,19 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                   });
                 } else {
                   let args1 = {
-                    domain: domain, 
-                    uid: uid, 
-                    order_id: order_id, 
-                    vid: vid, 
-                    plans: plans, 
-                    qid: qid, 
-                    pmid: pmid, 
-                    promotion: promotion, 
-                    service_ratio: service_ratio, 
-                    summary: summary, 
-                    payment: payment, 
-                    v_value: v_value, 
-                    expect_at: expect_at, 
+                    domain: domain,
+                    uid: uid,
+                    order_id: order_id,
+                    vid: vid,
+                    plans: plans,
+                    qid: qid,
+                    pmid: pmid,
+                    promotion: promotion,
+                    service_ratio: service_ratio,
+                    summary: summary,
+                    payment: payment,
+                    v_value: v_value,
+                    expect_at: expect_at,
                     callback: callback
                   };
                   insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
@@ -362,11 +362,11 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
               return;
             } else {
               let args2 = {
-                domain: domain, 
-                uid: uid, 
-                vid: vid, 
-                dids: dids, 
-                summary: summary, 
+                domain: domain,
+                uid: uid,
+                vid: vid,
+                dids: dids,
+                summary: summary,
                 payment: payment
               };
               insert_driver_order_recursive(db, done, order_id, args2, dids.map(did => did), {}, () => {
@@ -428,8 +428,8 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
           log.info("call vehicle error");
         } else {
           if (code == 2) {
-            let name:string = vehicle["owner"].name;
-            let identity_no:string = vehicle["owner"].identity_no;
+            let name: string = vehicle["owner"].name;
+            let identity_no: string = vehicle["owner"].identity_no;
             let g_name: any;
             let apportion: number = 0.20;
             if (parseInt(identity_no.substr(16, 1)) % 2 == 1) {
@@ -446,7 +446,7 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
               }
             });
           } else if (code == 3) {
-            cache.hget("order-entities", order_id, function(err, replise) {
+            cache.hget("order-entities", order_id, function (err, replise) {
               if (err) {
                 log.info('err,get redis error');
                 done();
@@ -469,7 +469,7 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
           } else {
             log.info('out of 2,3 in order state_code');
           }
-          cache.hget("order-entities", order_id, function(err, replise) {
+          cache.hget("order-entities", order_id, function (err, replise) {
             if (err) {
               log.info('err,get redis error');
               done();
@@ -489,6 +489,7 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
                     order_entities["start_at"] = start_at;
                   } else {
                     let multi = cache.multi();
+                    multi.hset("vid-poid", vid, order_id);
                     multi.hset("order-entities", order_id, JSON.stringify(order_entities));
                     multi.exec((err, result1) => {
                       if (err) {
@@ -876,7 +877,7 @@ processor.call("alterNote", (db: PGClient, cache: RedisClient, done: DoneFunctio
 });
 
 // 上传现场图片
-processor.call("uploadPhotos", (db: PGClient, cache: RedisClient, done: DoneFunction,  uwid: string, photo: string, update_time:any, callback: string) => {
+processor.call("uploadPhotos", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, photo: string, update_time: any, callback: string) => {
   log.info("uploadPhotos ");
   let upid = uuid.v1();
   modifyUnderwrite(db, cache, done, uwid, callback, "INSERT INTO underwrite_photos (id, uwid, photo) VALUES ($1, $2, $3)", [upid, uwid, photo], (underwrite) => {
