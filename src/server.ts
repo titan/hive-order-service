@@ -5,7 +5,7 @@ import * as nanomsg from "nanomsg";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
-import { verify, uuidVerifier, stringVerifier, numberVerifier, arrayVerify } from "hive-verify";
+import { verify, uuidVerifier, stringVerifier, numberVerifier} from "hive-verify";
 
 let log = bunyan.createLogger({
   name: "order-server",
@@ -49,10 +49,18 @@ let allowAll: Permission[] = [["mobile", true], ["admin", true]];
 let mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 
 // 获取所有订单
-svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: string, limit: string) => {
+svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number) => {
   // http://redis.io/commands/smembers
   log.info("getallorder");
-  ctx.cache.zrevrange(order_key, start, limit, function(err, result) {
+  if (!verify([numberVerifier("start", start), numberVerifier("limit", limit)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.zrevrange(order_key, start, limit, function (err, result) {
     if (err) {
       rep({ code: 500, state: err });
     } else {
@@ -74,7 +82,15 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
 svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
   // http://redis.io/commands/smembers
   log.info("getorder");
-  ctx.cache.hget(order_entities, order_id, function(err, result) {
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(order_entities, order_id, function (err, result) {
     if (err) {
       rep({ code: 500, state: err });
     } else {
@@ -83,10 +99,18 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
   });
 });
 // 获取订单列表
-svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset: string, limit: string) => {
+svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset: number, limit: number) => {
   // http://redis.io/commands/smembers
   log.info("getorders");
-  ctx.cache.zrange(orders + ctx.uid, offset, limit, function(err, result) {
+  if (!verify([numberVerifier("offset", offset), numberVerifier("limit", limit)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.zrange(orders + ctx.uid, offset, limit, function (err, result) {
     // log.info(result);
     if (err) {
       log.info("get redis error in getorders");
@@ -101,7 +125,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         if (err2) {
           log.error(err2, "query error");
         } else {
-          log.info("replies==========" + replies);
+          // log.info("replies==========" + replies);
           rep(replies.map(e => JSON.parse(e)));
         }
       });
@@ -111,12 +135,20 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
 // 查看订单状态
 svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string) => {
   log.info("getorderstate");
-  ctx.cache.hget(order_vid + vid, qid, function(err, result) {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(order_vid + vid, qid, function (err, result) {
     log.info("===========" + result);
     if (err || result == null) {
       rep({ code: 500, state: "not found" });
     } else {
-      ctx.cache.hget(order_entities, result, function(err1, result1) {
+      ctx.cache.hget(order_entities, result, function (err1, result1) {
         if (err || result1 == null) {
           log.info(err + "get order_entities err in getOrderState");
           rep({ code: 500 });
@@ -128,12 +160,19 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
   });
 });
 
-
 // 获取驾驶人信息
 svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   // http://redis.io/commands/smembers
   log.info("getorders");
-  ctx.cache.hget(driver_entities, vid, function(err, result) {
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(driver_entities, vid, function (err, result) {
     if (err) {
       log.info("get redis error in getDriverOrders");
       log.info(err);
@@ -146,54 +185,69 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
 });
 
 // 下计划单
-svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: string, summary: string, payment: string, v_value: string, expect_at: any) => {
+svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any) => {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("promotion", promotion), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let uid = ctx.uid;
   let callback = uuid.v1();
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = { domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback };
+  let args = [ domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback ];
   log.info("placeplanorder %j", args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
   rep({ code: 200, order_id: order_id });
   // wait_for_response(ctx.cache, callback, rep);
 });
 // 下司机单
-svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: string, payment: string) => {
+svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: number, payment: number) => {
   log.info("getDetail %j", dids);
+  if (!verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let uid = ctx.uid;
   let domain = ctx.domain;
-  let args = { domain, uid, vid, dids, summary, payment };
+  let args = [ domain, uid, vid, dids, summary, payment ];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
   rep({ code: 200 });
 });
 
-// 下第三方订单
-svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, qid: string, items: string[], summary: string, payment: string) => {
-  log.info("getDetail %j", ctx);
-  let uid = ctx.uid;
-  let args = { uid, vid, qid, items, summary, payment };
-  ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-  rep({ code: 200 });
-});
-
-// 更改订单状态
-svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, order_no: any, state_code: string, state: string) => {
-  ctx.cache.hget(orderNo_id, order_no, function(err, result) {
+//更新订单状态
+svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
+  if (!verify([uuidVerifier("uid", uid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(orderNo_id, order_no, function (err, result) {
     if (err || result == null) {
       log.info("get redis error in getDriverOrders");
       log.info(err);
       rep({ code: 404, state: "not found" });
     } else {
-      let uid = ctx.uid;
       let order_id = result;
-      ctx.cache.hget(orderid_vid, order_id, function(err1, result1) {
+      ctx.cache.hget(orderid_vid, order_id, function (err1, result1) {
         if (err || result1 == null) {
           log.info("get redis error in get orderid_vid" + err1);
           rep({ code: 404, state: "not found the vid" });
         } else {
           let vid = result1;
-          let domain = ctx.domain; log.info("==========" + result);
-          let args = { domain, uid, vid, order_id, state_code, state };
+          let domain = ctx.domain;
+          log.info("==========" + result);
+          let args = [ domain, uid, vid, order_id, state_code, state ];
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
           rep({ code: 200 });
@@ -203,6 +257,71 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
   });
 });
 
+// 下第三方订单
+svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid:string, qid: string, items: any, summary: number, payment: number) => {
+  log.info("placeAnSaleOrder %j", ctx);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  let uid = ctx.uid;
+  let order_id = uuid.v1();
+  let domain = ctx.domain;
+  let args = [ uid, domain, order_id, vid,pid, qid, items, summary, payment ];
+  ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
+  rep({ code: 200, order_id: order_id });
+});
+
+//修改第三方订单
+svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any) => {
+  log.info('updateSaleOrder %j', ctx);
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  let domain = ctx.domain;
+  let callback = uuid.v1();
+  let args = [ domain, order_id, items, callback ];
+  ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
+});
+
+//根据vid获取第三方保险
+svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+  log.info("getorderstate");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("vehicle-order", vid, function (err, result) {
+    log.info("===========" + result);
+    if (err || result == null) {
+      log.info(err);
+      rep({ code: 500, state: "not found" });
+    } else {
+      ctx.cache.hget(order_entities, result, function (err1, result1) {
+        if (err || result1 == null) {
+          log.info(err + "get order_entities err in getOrderState");
+          rep({ code: 500, state: "not found" });
+        } else {
+          rep(JSON.parse(result1));
+        }
+      });
+    }
+  });
+});
 
 // 生成核保
 svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, oid: string, plan_time: any, validate_place: string) => {
@@ -218,7 +337,7 @@ svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, 
   let validate_update_time = new Date();
   let uwid = uuid.v1();
   let callback = uuid.v1();
-  let args = { uwid, oid, plan_time, validate_place, validate_update_time, callback };
+  let args = [ uwid, oid, plan_time, validate_place, validate_update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "createUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -237,16 +356,16 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
   }
   let validate_update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, plan_time, validate_place, validate_update_time, callback };
+  let args = [ uwid, plan_time, validate_place, validate_update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterValidatePlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
 // 工作人员填充验车信息
-svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note:string, photos: any) => {
+svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note: string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), arrayVerify("problem_type", problem_type), stringVerifier("problem_description", problem_description), stringVerifier("note", note), arrayVerify("photos", photos)], (errors: string[]) => {
+  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), stringVerifier("problem_description", problem_description), stringVerifier("note", note)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -273,7 +392,7 @@ svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uw
   //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
   // ];
 
-  let args = { domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback };
+  let args = [ domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -292,9 +411,7 @@ svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunc
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, underwrite_result, update_time, callback };
-  log.info("args: " + args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: args }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -311,9 +428,7 @@ svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunct
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, underwrite_result, update_time, callback };
-  log.info("args: " + args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "alterUnderwriteResult", args: args }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -330,7 +445,7 @@ svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uw
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, real_place, update_time, callback };
+  let args = [ uwid, real_place, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterRealPlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -349,7 +464,7 @@ svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: s
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, note, update_time, callback };
+  let args = [ uwid, note, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -368,7 +483,7 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, photo, callback };
+  let args = [ uwid, photo, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "uploadPhotos", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -377,7 +492,7 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
 // 根据订单编号得到核保信息
 svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: ResponseFunction, oid: string) => {
   log.info("getUnderwriteByOrderNumber uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("oid", oid)], (errors: string[]) => {
+  if (!verify([stringVerifier("oid", oid)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -385,7 +500,7 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
   })) {
     return;
   }
-  ctx.cache.zrange("orders", 0, -1, function(err, result) {
+  ctx.cache.zrange("orders", 0, -1, function (err, result) {
     if (result) {
       let multi = ctx.cache.multi();
       for (let orderid of result) {
@@ -400,7 +515,7 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
             }
           });
           if (orderid != null) {
-            ctx.cache.zrange("underwrite", 0, -1, function(err3, result3) {
+            ctx.cache.zrange("underwrite", 0, -1, function (err3, result3) {
               if (result3) {
                 let multi = ctx.cache.multi();
                 for (let uwid of result3) {
@@ -460,7 +575,7 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
   })) {
     return;
   }
-  ctx.cache.zrange("underwrite", 0, -1, function(err, result) {
+  ctx.cache.zrange("underwrite", 0, -1, function (err, result) {
     if (result) {
       let multi = ctx.cache.multi();
       for (let uwid of result) {
@@ -520,7 +635,7 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
     return;
   }
   let order_info: any;
-  ctx.cache.hget("underwrite-entities", uwid, function(err, result) {
+  ctx.cache.hget("underwrite-entities", uwid, function (err, result) {
     if (result) {
       rep(JSON.parse(result));
     } else if (err) {
