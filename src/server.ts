@@ -198,7 +198,7 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let callback = uuid.v1();
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = { domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback };
+  let args = [ domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback ];
   log.info("placeplanorder %j", args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
   rep({ code: 200, order_id: order_id });
@@ -217,15 +217,14 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
   }
   let uid = ctx.uid;
   let domain = ctx.domain;
-  let args = { domain, uid, vid, dids, summary, payment };
+  let args = [ domain, uid, vid, dids, summary, payment ];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
   rep({ code: 200 });
 });
 
-// 更改订单状态
-svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string) => {
-  log.info('updateSaleOrder %j', ctx);
-  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+//更新订单状态
+svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
+  if (!verify([uuidVerifier("uid", uid)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -233,15 +232,6 @@ svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, o
   })) {
     return;
   }
-  let uid = ctx.uid;
-  let domain = ctx.domain;
-  let args = { uid, domain, order_id };
-  ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
-  rep({ code: 200, order_id: order_id });
-});
-
-//更新订单状态
-svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
   ctx.cache.hget(orderNo_id, order_no, function (err, result) {
     if (err || result == null) {
       log.info("get redis error in getDriverOrders");
@@ -257,7 +247,7 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
           let vid = result1;
           let domain = ctx.domain;
           log.info("==========" + result);
-          let args = { domain, uid, vid, order_id, state_code, state };
+          let args = [ domain, uid, vid, order_id, state_code, state ];
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
           rep({ code: 200 });
@@ -281,7 +271,7 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let uid = ctx.uid;
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = { uid, domain, order_id, vid,pid, qid, items, summary, payment };
+  let args = [ uid, domain, order_id, vid,pid, qid, items, summary, payment ];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
   rep({ code: 200, order_id: order_id });
 });
@@ -289,10 +279,17 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
 //修改第三方订单
 svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any) => {
   log.info('updateSaleOrder %j', ctx);
-  let uid = ctx.uid;
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
   let domain = ctx.domain;
   let callback = uuid.v1();
-  let args = { uid, domain, order_id, items, callback };
+  let args = [ domain, order_id, items, callback ];
   ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });
@@ -340,7 +337,7 @@ svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, 
   let validate_update_time = new Date();
   let uwid = uuid.v1();
   let callback = uuid.v1();
-  let args = { uwid, oid, plan_time, validate_place, validate_update_time, callback };
+  let args = [ uwid, oid, plan_time, validate_place, validate_update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "createUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -359,7 +356,7 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
   }
   let validate_update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, plan_time, validate_place, validate_update_time, callback };
+  let args = [ uwid, plan_time, validate_place, validate_update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterValidatePlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -395,8 +392,8 @@ svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uw
   //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
   // ];
 
-  let args = { domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback };
-  log.info("args: " + JSON.stringify(args));
+  let args = [ domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback ];
+  log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });
@@ -414,9 +411,7 @@ svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunc
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, underwrite_result, update_time, callback };
-  log.info("args: " + args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: args }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -433,9 +428,7 @@ svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunct
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, underwrite_result, update_time, callback };
-  log.info("args: " + args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "alterUnderwriteResult", args: args }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -452,7 +445,7 @@ svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uw
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, real_place, update_time, callback };
+  let args = [ uwid, real_place, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterRealPlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -471,7 +464,7 @@ svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: s
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, note, update_time, callback };
+  let args = [ uwid, note, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -490,7 +483,7 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = { uwid, photo, callback };
+  let args = [ uwid, photo, update_time, callback ];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "uploadPhotos", args: args }));
   wait_for_response(ctx.cache, callback, rep);
