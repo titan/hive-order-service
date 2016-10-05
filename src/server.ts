@@ -34,6 +34,8 @@ let driver_entities = "driver-entities-";
 let order_vid = "order-vid-";
 let orderNo_id = "orderNo-id";
 let orderid_vid = "orderid-vid";
+let vid_poid = "vid-poid";
+let vid_doid = "vid-doid";
 // let orders_key = "uid";
 
 let config: Config = {
@@ -198,7 +200,7 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let callback = uuid.v1();
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = [ domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback ];
+  let args = [domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback];
   log.info("placeplanorder %j", args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
   rep({ code: 200, order_id: order_id });
@@ -217,7 +219,7 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
   }
   let uid = ctx.uid;
   let domain = ctx.domain;
-  let args = [ domain, uid, vid, dids, summary, payment ];
+  let args = [domain, uid, vid, dids, summary, payment];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
   rep({ code: 200 });
 });
@@ -247,7 +249,7 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
           let vid = result1;
           let domain = ctx.domain;
           log.info("==========" + result);
-          let args = [ domain, uid, vid, order_id, state_code, state ];
+          let args = [domain, uid, vid, order_id, state_code, state];
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
           rep({ code: 200 });
@@ -257,8 +259,61 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
   });
 });
 
+//通过vid获取已生效计划单
+svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+  log.info("getPlanOrderByVehicle");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(vid_poid, vid, function (err, result) {
+    if (err) {
+      log.info("get redis error in getPlanOrderByVehicle");
+      log.info(err);
+      rep({ code: 500, state: err });
+    } else if (result === null) {
+      log.info("not found planorder for this vid");
+      rep({ code: 404, msg: "not found" });
+    } else {
+      log.info("replies==========" + result);
+      rep(JSON.parse(result));
+    }
+  });
+});
+
+//通过vid获取司机单
+svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+  log.info("getPlanOrderByVehicle");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(vid_doid, vid, function (err, result) {
+    if (err) {
+      log.info("get redis error in getPlanOrderByVehicle");
+      log.info(err);
+      rep({ code: 500, state: err });
+    } else if (result === null) {
+      log.info("not found planorder for this vid");
+      rep({ code: 404, msg: "not found" });
+    } else {
+      log.info("replies==========" + result);
+      rep(JSON.parse(result));
+    }
+  });
+});
+
+
 // 下第三方订单
-svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid:string, qid: string, items: any, summary: number, payment: number) => {
+svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid: string, qid: string, items: any, summary: number, payment: number) => {
   log.info("placeAnSaleOrder %j", ctx);
   if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
     rep({
@@ -271,7 +326,7 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let uid = ctx.uid;
   let order_id = uuid.v1();
   let domain = ctx.domain;
-  let args = [ uid, domain, order_id, vid,pid, qid, items, summary, payment ];
+  let args = [uid, domain, order_id, vid, pid, qid, items, summary, payment];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
   rep({ code: 200, order_id: order_id });
 });
@@ -289,7 +344,7 @@ svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, o
   }
   let domain = ctx.domain;
   let callback = uuid.v1();
-  let args = [ domain, order_id, items, callback ];
+  let args = [domain, order_id, items, callback];
   ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });
@@ -337,7 +392,7 @@ svc.call("createUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, 
   let validate_update_time = new Date();
   let uwid = uuid.v1();
   let callback = uuid.v1();
-  let args = [ uwid, oid, plan_time, validate_place, validate_update_time, callback ];
+  let args = [uwid, oid, plan_time, validate_place, validate_update_time, callback];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "createUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -356,7 +411,7 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
   }
   let validate_update_time = new Date();
   let callback = uuid.v1();
-  let args = [ uwid, plan_time, validate_place, validate_update_time, callback ];
+  let args = [uwid, plan_time, validate_place, validate_update_time, callback];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterValidatePlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -392,7 +447,7 @@ svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uw
   //   "http://pic.58pic.com/58pic/13/19/86/55m58PICf9t_1024.jpg"
   // ];
 
-  let args = [ domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback ];
+  let args = [domain, uwid, real_place, update_time, opid, certificate_state, problem_type, problem_description, note, photos, callback];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "fillUnderwrite", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -445,7 +500,7 @@ svc.call("alterRealPlace", permissions, (ctx: Context, rep: ResponseFunction, uw
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = [ uwid, real_place, update_time, callback ];
+  let args = [uwid, real_place, update_time, callback];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "alterRealPlace", args: args }));
   wait_for_response(ctx.cache, callback, rep);
@@ -464,9 +519,7 @@ svc.call("alterNote", permissions, (ctx: Context, rep: ResponseFunction, uwid: s
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = [ uwid, note, update_time, callback ];
-  log.info("args: " + args);
-  ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: args }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "alterNote", args: [uwid, note, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -483,7 +536,7 @@ svc.call("uploadPhotos", permissions, (ctx: Context, rep: ResponseFunction, uwid
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  let args = [ uwid, photo, update_time, callback ];
+  let args = [uwid, photo, update_time, callback];
   log.info("args: " + args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "uploadPhotos", args: args }));
   wait_for_response(ctx.cache, callback, rep);
