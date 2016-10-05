@@ -381,12 +381,29 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                     log.info("call vehicle error");
                   } else {
                     async_serial_driver(driver_promises, [], drivers => {
+                      let vid_doid = null;
+                      cache.hget("vid-doid", vid, function (err, result1) {
+                        if (err) {
+                          log.info("get vid-doid error");
+                        }
+                        if (result == null) {
+                          cache.hset("vid-doid", vid, order_id, function (err, result2) {
+                            if (err) {
+                              log.info("hset vid-doid in placeAnDriverOrder");
+                            }
+                          });
+                        } else {
+                          vid_doid = JSON.parse(result1);
+                        }
+                      });
+                      vid_doid.push(order_id);
                       let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
                       let order_drivers = { drivers: drivers, vehicle: vehicle };
                       let multi = cache.multi();
                       multi.zadd("driver_orders", created_at, order_id);
                       multi.zadd("orders", created_at, order_id);
                       multi.zadd("orders-" + uid, created_at, order_id);
+                      multi.hset("vid-doid", vid, JSON.stringify(vid_doid));
                       multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
                       multi.hset("order-entities", order_id, JSON.stringify(order));
                       multi.exec((err3, replies) => {
