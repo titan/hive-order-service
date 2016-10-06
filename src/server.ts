@@ -280,7 +280,7 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
       rep({ code: 404, msg: "not found" });
     } else {
       log.info("replies==========" + result);
-      rep(JSON.parse(result));
+      rep({ code: 200, order: JSON.parse(result) });
     }
   });
 });
@@ -306,7 +306,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       rep({ code: 404, msg: "not found" });
     } else {
       log.info("replies==========" + result);
-      rep(JSON.parse(result));
+      rep({ code: 200, order: result.map(e => JSON.parse(e)) });
+      // rep(JSON.parse(result));
     }
   });
 });
