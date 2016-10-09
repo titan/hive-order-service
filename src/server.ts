@@ -118,7 +118,11 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
       log.info("get redis error in getorders");
       log.info(err);
       rep({ code: 500, state: err });
-    } else {
+    }
+    else if (result === null) {
+      rep([""]);
+    }
+    else {
       let multi = ctx.cache.multi();
       for (let order_key of result) {
         multi.hget(order_entities, order_key);
@@ -279,8 +283,14 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
       log.info("not found planorder for this vid");
       rep({ code: 404, msg: "not found" });
     } else {
-      log.info("replies==========" + result);
-      rep(JSON.parse(result));
+      ctx.cache.hget(order_entities, result, function (err, result1) {
+        if (err) {
+          log.info("get Redis in get order_entities ERROR" + err)
+        } else {
+          log.info("replies==========" + result1);
+          rep({ code: 200, order: JSON.parse(result1) });
+        }
+      });
     }
   });
 });
@@ -306,7 +316,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       rep({ code: 404, msg: "not found" });
     } else {
       log.info("replies==========" + result);
-      rep(JSON.parse(result));
+      rep({ code: 200, order: result.map(e => JSON.parse(e)) });
+      // rep(JSON.parse(result));
     }
   });
 });
@@ -332,7 +343,7 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
 });
 
 //修改第三方订单
-svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any) => {
+svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any, summary: number, payment: number) => {
   log.info('updateSaleOrder %j', ctx);
   if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
     rep({
@@ -343,10 +354,9 @@ svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, o
     return;
   }
   let domain = ctx.domain;
-  let callback = uuid.v1();
-  let args = [domain, order_id, items, callback];
+  let args = [domain, order_id, items, summary, payment];
   ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
-  wait_for_response(ctx.cache, callback, rep);
+  rep({ code: 200 });
 });
 
 //根据vid获取第三方保险
@@ -466,7 +476,8 @@ svc.call("submitUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunc
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
+  let domain = ctx.domain;
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [domain, uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
@@ -483,7 +494,8 @@ svc.call("alterUnderwriteResult", permissions, (ctx: Context, rep: ResponseFunct
   }
   let update_time = new Date();
   let callback = uuid.v1();
-  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [uwid, underwrite_result, update_time, callback] }));
+  let domain = ctx.domain;
+  ctx.msgqueue.send(msgpack.encode({ cmd: "submitUnderwriteResult", args: [domain, uwid, underwrite_result, update_time, callback] }));
   wait_for_response(ctx.cache, callback, rep);
 });
 
