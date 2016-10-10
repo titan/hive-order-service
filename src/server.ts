@@ -228,7 +228,7 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
   rep({ code: 200 });
 });
 
-//更新订单状态
+// 更新订单状态
 svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
   if (!verify([uuidVerifier("uid", uid)], (errors: string[]) => {
     rep({
@@ -263,7 +263,7 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
   });
 });
 
-//通过vid获取已生效计划单
+// 通过vid获取已生效计划单
 svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   log.info("getPlanOrderByVehicle");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
@@ -285,7 +285,7 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
     } else {
       ctx.cache.hget(order_entities, result, function (err, result1) {
         if (err) {
-          log.info("get Redis in get order_entities ERROR" + err)
+          log.info("get Redis in get order_entities ERROR" + err);
         } else {
           log.info("replies==========" + result1);
           rep({ code: 200, order: JSON.parse(result1) });
@@ -295,7 +295,7 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
   });
 });
 
-//通过vid获取司机单
+// 通过vid获取司机单
 svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   log.info("getPlanOrderByVehicle");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
@@ -342,9 +342,9 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   rep({ code: 200, order_id: order_id });
 });
 
-//修改第三方订单
-svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any, summary: number, payment: number) => {
-  log.info('updateSaleOrder %j', ctx);
+// 修改第三方订单
+svc.call("updateSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id: string, items: any, summary: number, payment: number) => {
+  log.info("updateSaleOrder %j", ctx);
   if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
     rep({
       code: 400,
@@ -359,7 +359,7 @@ svc.call('updateSaleOrder', permissions, (ctx: Context, rep: ResponseFunction, o
   rep({ code: 200 });
 });
 
-//根据vid获取第三方保险
+// 根据vid获取第三方保险
 svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   log.info("getorderstate");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
