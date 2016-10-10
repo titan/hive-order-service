@@ -930,9 +930,9 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             let stop_at = new Date(start_at.getTime() + 31536000000);
             order["start_at"] = start_at;
             order["stop_at"] = stop_at;
-            order["state_code"] = "3";
+            order["state_code"] = 3;
             order["state"] = "已核保";
-            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = "3", state = "已核保" WHERE id = $3", [start_at, stop_at, orderid], (err: Error) => {
+            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = $3, state = $4 WHERE id = $5", [start_at, stop_at, 3, "已核保", orderid], (err: Error) => {
               if (err) {
                 log.info(err);
                 reject(err);
