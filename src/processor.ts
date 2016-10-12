@@ -206,7 +206,8 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     if (err || !strNo) {
       log.info(err + "cache incr err");
     } else {
-      let no: string = formatNum(<string>strNo, 7);
+      let strno = String(strNo);
+      let no: string = formatNum(strno, 7);
       let date = new Date();
       let year = date.getFullYear();
       let pids = [];
@@ -1209,7 +1210,6 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
           }
         });
         order["items"] = items;
-        //todo
       }
     }
   });
