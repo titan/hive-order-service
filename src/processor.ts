@@ -932,7 +932,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             order["stop_at"] = stop_at;
             order["state_code"] = 3;
             order["state"] = "已核保";
-            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = $3, state = $4 WHERE id = $5", [start_at, stop_at, 3, "已核保", orderid], (err: Error) => {
+            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
               if (err) {
                 log.info(err);
                 reject(err);
@@ -964,7 +964,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             let CarNo = order["vehicle"]["vehicle"]["familyName"];
             let name = order["vehicle"]["vehicle"]["owner"]["name"];
 
-            http.get(`http://${wxhost}/wx/wxpay/tmsgApplication?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
+            http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
               log.info(`Notify response: ${res.statusCode}`);
               // consume response body
               res.resume();
@@ -1098,6 +1098,122 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
 
 
 
+
+function select_order_item_recursive(db, done, piids, acc, cb) {
+  if (piids.length === 0) {
+    cb(acc);
+  } else {
+    let piid = piids.shift();
+    db.query("SELECT id,price,pid FROM order_items WHERE id = $1", [piid], (err: Error, result: ResultSet) => {
+      if (err) {
+        log.info(err);
+        db.query("ROLLBACK", [], (err: Error) => {
+          log.error(err, "insert into order_items error");
+          done();
+        });
+      } else {
+        let item = { id: piid, price: result["price"], pid: result["pid"], plan_item: null };
+        acc.push(item);
+        select_order_item_recursive(db, done, piids, acc, cb);
+      }
+    });
+  }
+}
+
+processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain) => {
+  log.info(" order refresh");
+  db.query("SELECT id, vid, type, state_code, state, summary, payment, start_at FROM orders", [], (err: Error, result: ResultSet) => {
+    if (err) {
+      log.error(err, " SELECT order query error");
+      done();
+    } else {
+      let orders: Object[] = [];
+      // let order: Object = null;
+      //vehicle, created_at: created_at1, start_at: start_at
+      for (let row of result.rows) {
+        let order = {
+          summary: row.summary,
+          state: row.state,
+          payment: row.payment,
+          v_value: null,
+          p_price: null,
+          stop_at: null,
+          service_ratio: null,
+          plan: [],
+          items: [],
+          expect_at: null,
+          state_code: row.state_code,
+          id: null,
+          order_id: row.order_id,
+          qid: null,
+          type: row.type,
+          vehicle: [],
+          created_at: row.start_at,
+          start_at: null
+        };
+        orders.push(order);
+        let p = rpc<Object[]>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", row.vid);
+        p.then((vehicles) => {
+          if (err) {
+            log.info("call vehicle error");
+          } else {
+            order["vehicle"] = vehicles;
+            cache.hget("order_entities", row.id, function (err, result) {
+              if (err) {
+                log.info("get order_entities err in refresh" + err);
+                done();
+              } else {
+                let order_entities = JSON.parse(result);
+                order["v_value"] = order_entities.v_value;
+                order["p_price"] = order_entities.p_price;
+                order["stop_at"] = order_entities.stop_at;
+                order["service_ratio"] = order_entities.service_ratio;
+                order["id"] = order_entities.id;
+              }
+            });
+            db.query("SELECT pid FROM plan_order_ext", [], (err: Error, result1: ResultSet) => {
+              let plan_promises: Promise<Object>[] = [];
+              for (let row of result1.rows) {
+                let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", row["pid"]);
+                plan_promises.push(p1);
+              }
+              async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
+                order["plan"] = plans2;
+              }, (e: Error) => {
+                log.error(e);
+                done(); // close db and cache connection
+              });
+            });
+          }
+        });
+        let piids = [];
+        let plan_items = [];
+        for (let order of orders) {
+          let plans = order["plan"];
+          for (let plan of plans) {
+            for (let item of plan["items"]) {
+              plan_items.push(item);
+              piids.push(item["id"]);
+            }
+          }
+        }
+        let items: Object[] = [];
+        select_order_item_recursive(db, done, piids.map(piid => piid), {}, (acc) => {
+          items = acc;
+          for (let item of items) {
+            for (let plan_item of plan_items) {
+              if (plan_item["id"] == item["piid"]) {
+                item["plan_item"] == plan_item;
+              }
+            }
+          }
+        });
+        order["items"] = items;
+        //todo
+      }
+    }
+  });
+});
 
 
 
