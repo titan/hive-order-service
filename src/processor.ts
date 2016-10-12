@@ -1139,9 +1139,6 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
   });
 }
 
-
-
-
 function select_order_item_recursive(db, done, piids, acc, cb) {
   if (piids.length === 0) {
     cb(acc);
@@ -1163,7 +1160,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
   }
 }
 
-function refresh_driver_orders(db, cache, domain) {
+function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
     db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid", [], (e: Error, result: ResultSet) => {
       if (e) {
@@ -1183,7 +1180,8 @@ function refresh_driver_orders(db, cache, domain) {
               payment: row.o_payment,
               start_at: row.o_start_at,
               stop_at: row.o_stop_at,
-              vehicle: row.o_vid,
+              vid: row.o_vid,
+              vehicle: null,
               drivers: [],
               dids: [row.e_pid],
             }
@@ -1200,8 +1198,9 @@ function refresh_driver_orders(db, cache, domain) {
           for (const vehicle of vehicles) {
             for (const oid of Object.keys(orders)) {
               const order = orders[oid];
-              if (vehicle["id"] === order.vehicle) {
+              if (vehicle["id"] === order.vid) {
                 order.vehicle = vehicle;
+                delete order["vid"];
                 break;
               }
             }
@@ -1215,16 +1214,14 @@ function refresh_driver_orders(db, cache, domain) {
             return acc;
           }, []);
           async_serial_ignore<Object>(pds, [], (drvreps) => {
-            for (const res of drvreps) {
-              if (!res.hasOwnProperty("code") || res["code"] === 200) {
-                const driver = res;
-                for (const oid of Object.keys(orders)) {
-                  const order = orders[oid];
-                  for (const drv of order.drivers) {
-                    if (drv === driver["id"]) {
-                      order.drivers.push(driver);
-                      break;
-                    }
+            const drivers = drvreps.filter(d => d["code"] === 200).map(d => d["data"]);
+            for (const driver of drivers) {
+              for (const oid of Object.keys(orders)) {
+                const order = orders[oid];
+                for (const drv of order.drivers) {
+                  if (drv === driver["id"]) {
+                    order.drivers.push(driver);
+                    break;
                   }
                 }
               }
@@ -1234,6 +1231,7 @@ function refresh_driver_orders(db, cache, domain) {
               const order = orders[oid];
               delete order["dids"];
               multi.hset("order-entities", oid, JSON.stringify(order));
+              multi.zadd("driver-orders", new Date().getTime(), oid);
             }
             multi.exec((err: Error, _: any[]) => {
               if (err) {
@@ -1249,8 +1247,9 @@ function refresh_driver_orders(db, cache, domain) {
   });
 }
 
-processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain) => {
+processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string) => {
   log.info(" order refresh");
+  const pdo = refresh_driver_orders(db, cache, domain);
   db.query("SELECT id, vid, type, state_code, state, summary, payment, start_at FROM orders", [], (err: Error, result: ResultSet) => {
     if (err) {
       log.error(err, " SELECT order query error");
