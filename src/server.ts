@@ -96,7 +96,7 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
     if (err) {
       rep({ code: 500, state: err });
     } else {
-      rep(JSON.parse(result));
+      rep({ code: 200, data: JSON.parse(result) });
     }
   });
 });
@@ -120,7 +120,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
       rep({ code: 500, state: err });
     }
     else if (result === null) {
-      rep([""]);
+      rep({ code: 404, msg: "not found" });
     }
     else {
       let multi = ctx.cache.multi();
@@ -132,7 +132,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
           log.error(err2, "query error");
         } else {
           // log.info("replies==========" + replies);
-          rep(replies.map(e => JSON.parse(e)));
+          rep({ code: 200, data: replies.map(e => JSON.parse(e)) });
         }
       });
     }
@@ -159,7 +159,7 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
           log.info(err + "get order_entities err in getOrderState");
           rep({ code: 500 });
         } else {
-          rep(JSON.parse(result1));
+          rep({ code: 200, data: JSON.parse(result1) });
         }
       });
     }
@@ -185,7 +185,7 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
       rep({ code: 500, state: err });
     } else {
       log.info("replies==========" + result);
-      rep(JSON.parse(result));
+      rep({ code: 200, data: JSON.parse(result) });
     }
   });
 });
@@ -381,7 +381,7 @@ svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid:
           log.info(err + "get order_entities err in getOrderState");
           rep({ code: 500, state: "not found" });
         } else {
-          rep(JSON.parse(result1));
+          rep({ code: 200, data: JSON.parse(result1) });
         }
       });
     }
@@ -660,7 +660,7 @@ svc.call("getUnderwriteByOrderId", permissions, (ctx: Context, rep: ResponseFunc
               msg: "Not found underwrite"
             });
           } else {
-            rep(uwinfo);
+            rep({ code: 200, data: uwinfo });
           }
         } else if (err2) {
           rep({
@@ -702,7 +702,7 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
   let order_info: any;
   ctx.cache.hget("underwrite-entities", uwid, function (err, result) {
     if (result) {
-      rep(JSON.parse(result));
+      rep({ code: 200, data: JSON.parse(result) });
     } else if (err) {
       rep({
         code: 500,
