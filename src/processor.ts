@@ -57,16 +57,16 @@ function getLocalTime(nS) {
 
 
 function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids, acc, cb) {
-  if (piids.length == 0) {
+  if (piids.length === 0) {
     cb(acc);
   } else {
     let item_id = uuid.v1();
     let piid = piids.shift();
-    db.query('INSERT INTO order_items(id,piid,pid, price) VALUES($1,$2,$3,$4)', [item_id, piid, pid, items[piid]], (err: Error) => {
+    db.query("INSERT INTO order_items(id,piid,pid, price) VALUES($1,$2,$3,$4)", [item_id, piid, pid, items[piid]], (err: Error) => {
       if (err) {
         log.info(err);
-        db.query('ROLLBACK', [], (err: Error) => {
-          log.error(err, 'insert into order_items error');
+        db.query("ROLLBACK", [], (err: Error) => {
+          log.error(err, "insert into order_items error");
           done();
         });
       } else {
@@ -78,16 +78,16 @@ function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids
 }
 
 function update_sale_order_items_recursive(db, done, prices, piids, acc, cb) {
-  if (piids.length == 0) {
+  if (piids.length === 0) {
     cb(acc);
   } else {
     let piid = piids.shift();
     let price = prices.shift();
-    db.query('UPDATE order_items SET price = $1 WHERE id = $2', [price, piid], (err: Error, result: ResultSet) => {
+    db.query("UPDATE order_items SET price = $1 WHERE id = $2", [price, piid], (err: Error, result: ResultSet) => {
       if (err) {
         log.info(err);
-        db.query('ROLLBACK', [], (err: Error) => {
-          log.error(err, 'insert into order_items error');
+        db.query("ROLLBACK", [], (err: Error) => {
+          log.error(err, "insert into order_items error");
           done();
         });
       } else {
@@ -309,7 +309,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                               let stop_at = null;
                               let orders = [order_id, expect_at];
                               let order = {
-                                summary: summary, state: state, payment: payment, v_value: v_value, p_price: promotion, stop_at: stop_at, service_ratio: service_ratio, plan: plans2, items: items, expect_at: expect_at, state_code: state_code, id: order_no, order_id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at
+                                summary: summary, state: state, payment: payment, v_value: v_value, p_price: promotion, stop_at: stop_at, service_ratio: service_ratio, plan: plans2, items: items, expect_at: expect_at, state_code: state_code, id: order_no, order_id: order_id, qid: qid, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at
                               };
                               let multi = cache.multi();
                               multi.zadd("plan-orders", created_at, order_id);
@@ -445,17 +445,16 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
     }
   });
 });
-processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: string, state: string) => {
-  log.info('updateOrderState');
-  // orderNo-id  
+processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: string, state: string) => {
+  log.info("updateOrderState");
   let code = parseInt(state_code, 10);
-  let type1 = 1;//钱包帐号type  
+  let type1 = 1;
   let balance: number = null;
   let start_at = null;
-  db.query('UPDATE orders SET state_code = $1,state = $2 WHERE id = $3', [code, state, order_id], (err: Error, result: ResultSet) => {
+  db.query("UPDATE orders SET state_code = $1,state = $2 WHERE id = $3", [code, state, order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
-      log.info('err,updateOrderState error');
+      log.info("err,updateOrderState error");
       done();
     } else {
       let p = rpc(domain, servermap["vehicle"], null, "getVehicleInfo", vid);
@@ -467,7 +466,7 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
           let identity_no: string = vehicle["owner"].identity_no;
           let g_name: any;
           let apportion: number = 0.20;
-          if (parseInt(identity_no.substr(16, 1)) % 2 == 1) {
+          if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
             g_name = name + "先生";
           } else {
             g_name = name + "女士";
@@ -477,12 +476,12 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
             if (err) {
               log.info("call group error");
             } else {
-              log.info('call group success for createGroup');
+              log.info("call group success for createGroup");
             }
           });
           cache.hget("order-entities", order_id, function (err, replise) {
             if (err) {
-              log.info('err,get redis error');
+              log.info("err,get redis error");
               done();
             } else {
               let order_entities = JSON.parse(replise);
@@ -504,10 +503,10 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
                     multi.hset("order-entities", order_id, JSON.stringify(order_entities));
                     multi.exec((err, result1) => {
                       if (err) {
-                        log.info('err:hset order_entities error');
+                        log.info("err:hset order_entities error");
                         done();
                       } else {
-                        log.info('db end in updateOrderState');
+                        log.info("db end in updateOrderState");
                         done();
                       }
                     });
@@ -523,8 +522,8 @@ processor.call('updateOrderState', (db: PGClient, cache: RedisClient, done: Done
 });
 
 // let args = {uid,vid,items,summary,payment};{piid: price}
-processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string) => {
-  log.info('placeAnOrder');
+processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string) => {
+  log.info("placeAnOrder");
   let item_id = uuid.v1();
   let event_id = uuid.v1();
   let state_code = 1;
@@ -536,29 +535,29 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
   for (let item in items) {
     piids.push(item);
   }
-  db.query('BEGIN', (err: Error) => {
+  db.query("BEGIN", (err: Error) => {
     if (err) {
-      log.error(err, 'query error');
+      log.error(err, "query error");
       done();
     } else {
-      db.query('INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1, $2, $3, $4, $5, $6, $7)', [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
+      db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1, $2, $3, $4, $5, $6, $7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
         if (err) {
-          db.query('ROLLBACK', [], (err: Error) => {
-            log.error(err, 'insert into orders error in placeAnSaleOrder');
+          db.query("ROLLBACK", [], (err: Error) => {
+            log.error(err, "insert into orders error in placeAnSaleOrder");
             done();
           });
         } else {
-          db.query('INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)', [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
+          db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
             if (err) {
-              db.query('ROLLBACK', [], (err: Error) => {
-                log.error(err, 'insert into order_events error');
+              db.query("ROLLBACK", [], (err: Error) => {
+                log.error(err, "insert into order_events error");
                 done();
               });
             } else {
-              db.query('INSERT INTO sale_order_ext(id, oid,pid,qid) VALUES($1, $2,$3,$4)', [event_id, order_id, pid, qid], (err: Error, result: ResultSet) => {
+              db.query("INSERT INTO sale_order_ext(id, oid,pid,qid) VALUES($1, $2,$3,$4)", [event_id, order_id, pid, qid], (err: Error, result: ResultSet) => {
                 if (err) {
-                  db.query('ROLLBACK', [], (err: Error) => {
-                    log.error(err, 'insert into order_events error');
+                  db.query("ROLLBACK", [], (err: Error) => {
+                    log.error(err, "insert into order_events error");
                     done();
                   });
                 } else {
@@ -584,9 +583,9 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
                               prices.push(items[item]);
                             }
                             let items1 = [];
-                            log.info('piids=============' + piids + 'prices=========' + prices + 'plan_items========================' + plan_items);
+                            log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
                             let len = Math.min(piids.length, prices.length, plan_items.length);
-                            log.info('=====length' + len);
+                            log.info("=====length" + len);
                             for (let i = 0; i < len; i++) {
                               let item_id = piids.shift();
                               let price = prices.shift();
@@ -609,7 +608,7 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
                             multi.hset("order-entities", order_id, JSON.stringify(order));
                             multi.exec((err3, replies) => {
                               if (err3) {
-                                log.error(err3, 'query error');
+                                log.error(err3, "query error");
                               }
                               done(); // close db and cache connection
                             });
@@ -627,10 +626,9 @@ processor.call('placeAnSaleOrder', (db: PGClient, cache: RedisClient, done: Done
     }
   });
 });
-// let args = [domain, order_id, items, summary, payment];
-//修改第三方保险
-processor.call('updateAnSaleOrder', (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number) => {
-  log.info('updateAnSaleOrder');
+
+processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number) => {
+  log.info("updateAnSaleOrder");
   // orderNo-id
   let update_at = new Date;
   let piids: Object[] = [];
@@ -639,30 +637,30 @@ processor.call('updateAnSaleOrder', (db: PGClient, cache: RedisClient, done: Don
     piids.push(item);
     prices.push(items[item]);
   }
-  db.query('BEGIN', (err: Error) => {
+  db.query("BEGIN", (err: Error) => {
     if (err) {
-      log.error(err, 'query error');
+      log.error(err, "query error");
       done();
     } else {
-      db.query('UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4', [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
+      db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
         if (err) {
           log.info(err);
-          log.info('err,updateOrderState error');
+          log.info("err,updateOrderState error");
           done();
         }
         else {
           update_sale_order_items_recursive(db, done, prices.map(price => price), piids.map(piid => piid), {}, () => {
             cache.hget("order-entities", order_id, function (err, result) {
               if (err) {
-                log.info('err,get redis error');
+                log.info("err,get redis error");
                 done();
               } else {
-                log.info('================' + result);
+                log.info("================" + result);
                 let order_entities = JSON.parse(result);
                 order_entities["payment"] = payment;
                 order_entities["summary"] = summary;
                 for (let piid in items) {
-                  if (order_entities["items"]["item_id"] == piid) {
+                  if (order_entities["items"]["item_id"] === piid) {
                     order_entities["items"]["price"] = items["piid"];
                   }
                 }
@@ -670,10 +668,10 @@ processor.call('updateAnSaleOrder', (db: PGClient, cache: RedisClient, done: Don
                 multi.hset("order-entities", order_id, JSON.stringify(order_entities));
                 multi.exec((err, result1) => {
                   if (err) {
-                    log.info('err:hset order_entities error');
+                    log.info("err:hset order_entities error");
                     done();
                   } else {
-                    log.info('db end in updateOrderState');
+                    log.info("db end in updateOrderState");
                     done();
                   }
                 });
@@ -921,7 +919,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
         console.log("orderid------------" + orderid);
         cache.hget("order-entities", orderid, function (err, result) {
           if (result) {
-            let order = JSON.parse(result)
+            let order = JSON.parse(result);
             let expect_at = new Date(order["expect_at"]);
             log.info(expect_at + "expect_at" + order["expect_at"]);
             let start_at = expect_at;
@@ -932,9 +930,9 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             let stop_at = new Date(start_at.getTime() + 31536000000);
             order["start_at"] = start_at;
             order["stop_at"] = stop_at;
-            order["state_code"] = "3";
+            order["state_code"] = 3;
             order["state"] = "已核保";
-            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = '3', state = '已核保' WHERE id = $3", [start_at, stop_at, orderid], (err: Error) => {
+            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
               if (err) {
                 log.info(err);
                 reject(err);
@@ -946,7 +944,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             reject(err);
           }
         });
-      })
+      });
     })
     .then((order: Object) => {
       let orderid = order["order_id"];
@@ -958,7 +956,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       }));
       multi.exec((err2, result2) => {
         if (result2) {
-          if (underwrite_result.trim() == "通过") {
+          if (underwrite_result.trim() === "通过") {
             log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
             let openid = rpc<Object>(domain, servermap["profile"], null, "getUserOpenId", order["vehicle"]["vehicle"]["user_id"]);
             log.info("openid------------" + openid);
@@ -966,7 +964,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             let CarNo = order["vehicle"]["vehicle"]["familyName"];
             let name = order["vehicle"]["vehicle"]["owner"]["name"];
 
-            http.get(`http://${wxhost}/wx/wxpay/tmsgApplication?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
+            http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
               log.info(`Notify response: ${res.statusCode}`);
               // consume response body
               res.resume();
@@ -1100,6 +1098,122 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
 
 
 
+
+function select_order_item_recursive(db, done, piids, acc, cb) {
+  if (piids.length === 0) {
+    cb(acc);
+  } else {
+    let piid = piids.shift();
+    db.query("SELECT id,price,pid FROM order_items WHERE id = $1", [piid], (err: Error, result: ResultSet) => {
+      if (err) {
+        log.info(err);
+        db.query("ROLLBACK", [], (err: Error) => {
+          log.error(err, "insert into order_items error");
+          done();
+        });
+      } else {
+        let item = { id: piid, price: result["price"], pid: result["pid"], plan_item: null };
+        acc.push(item);
+        select_order_item_recursive(db, done, piids, acc, cb);
+      }
+    });
+  }
+}
+
+processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain) => {
+  log.info(" order refresh");
+  db.query("SELECT id, vid, type, state_code, state, summary, payment, start_at FROM orders", [], (err: Error, result: ResultSet) => {
+    if (err) {
+      log.error(err, " SELECT order query error");
+      done();
+    } else {
+      let orders: Object[] = [];
+      // let order: Object = null;
+      //vehicle, created_at: created_at1, start_at: start_at
+      for (let row of result.rows) {
+        let order = {
+          summary: row.summary,
+          state: row.state,
+          payment: row.payment,
+          v_value: null,
+          p_price: null,
+          stop_at: null,
+          service_ratio: null,
+          plan: [],
+          items: [],
+          expect_at: null,
+          state_code: row.state_code,
+          id: null,
+          order_id: row.order_id,
+          qid: null,
+          type: row.type,
+          vehicle: [],
+          created_at: row.start_at,
+          start_at: null
+        };
+        orders.push(order);
+        let p = rpc<Object[]>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", row.vid);
+        p.then((vehicles) => {
+          if (err) {
+            log.info("call vehicle error");
+          } else {
+            order["vehicle"] = vehicles;
+            cache.hget("order_entities", row.id, function (err, result) {
+              if (err) {
+                log.info("get order_entities err in refresh" + err);
+                done();
+              } else {
+                let order_entities = JSON.parse(result);
+                order["v_value"] = order_entities.v_value;
+                order["p_price"] = order_entities.p_price;
+                order["stop_at"] = order_entities.stop_at;
+                order["service_ratio"] = order_entities.service_ratio;
+                order["id"] = order_entities.id;
+              }
+            });
+            db.query("SELECT pid FROM plan_order_ext", [], (err: Error, result1: ResultSet) => {
+              let plan_promises: Promise<Object>[] = [];
+              for (let row of result1.rows) {
+                let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", row["pid"]);
+                plan_promises.push(p1);
+              }
+              async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
+                order["plan"] = plans2;
+              }, (e: Error) => {
+                log.error(e);
+                done(); // close db and cache connection
+              });
+            });
+          }
+        });
+        let piids = [];
+        let plan_items = [];
+        for (let order of orders) {
+          let plans = order["plan"];
+          for (let plan of plans) {
+            for (let item of plan["items"]) {
+              plan_items.push(item);
+              piids.push(item["id"]);
+            }
+          }
+        }
+        let items: Object[] = [];
+        select_order_item_recursive(db, done, piids.map(piid => piid), {}, (acc) => {
+          items = acc;
+          for (let item of items) {
+            for (let plan_item of plan_items) {
+              if (plan_item["id"] == item["piid"]) {
+                item["plan_item"] == plan_item;
+              }
+            }
+          }
+        });
+        order["items"] = items;
+        //todo
+      }
+    }
+  });
+});
 
 
 
