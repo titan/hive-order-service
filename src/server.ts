@@ -273,7 +273,7 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
   });
 });
 
-//更新订单编号
+// 更新订单编号
 svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction, order_no: string) => {
   log.info(" updatePlanOrderNo", ctx);
   if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
@@ -289,7 +289,7 @@ svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction,
       log.info(err + "cache incr err");
       rep({ code: 500, msg: "未知错误" });
     } else {
-      let new_no = order_no.substring(0, 14)
+      let new_no = order_no.substring(0, 14);
       let strno = String(strNo);
       let no: string = formatNum(strno, 7);
       let new_order_no = new_no + no;
