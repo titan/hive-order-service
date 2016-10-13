@@ -185,7 +185,8 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
     cb(acc);
   } else {
     let p = ps.shift();
-    p.then(val => {
+    p.then(v => {
+      let val = v["data"];
       acc.push(val);
       async_serial_driver(ps, acc, cb);
     })
@@ -267,14 +268,16 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                       let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", pid);
                       plan_promises.push(p1);
                     }
-                    p.then((vehicle) => {
+                    p.then((v) => {
                       if (err) {
                         log.info("call vehicle error");
                       } else {
-                        p2.then((quotation) => {
+                        let vehicle = v["data"];
+                        p2.then((q) => {
                           if (err) {
                             log.info("call quotation error");
                           } else {
+                            let quotation = q["data"]
                             async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
                               let plan_items = [];
                               for (let plan1 of plans2) {
@@ -346,6 +349,43 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     }
   });
 });
+
+
+processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string) => {
+  log.info("updatePlanOrderNo" + order_no);
+  cache.hget("orderNo-id", order_no, function (err, result) {
+    if (err || result == null) {
+      log.info(err + "get order_id err or order_id not found");
+      done();
+    } else {
+      let order_id = result;
+      cache.hget("order-entities", order_id, function (err1, result1) {
+        if (err1 || result1 == null) {
+          log.info(err1 + "get order_entities err or order_entities not found");
+          done();
+        } else {
+          let order_entities = JSON.parse(result1);
+          order_entities["id"] = new_order_no;
+          let multi = cache.multi();
+          multi.hdel("orderNo-id", order_no);
+          multi.hset("orderNo-id", new_order_no, order_id);
+          multi.hset("order-entities", order_id, JSON.stringify(order_entities));
+          multi.exec((err2, result2) => {
+            if (err2) {
+              log.error(err2, "query redis error");
+            } else {
+              log.info("updatePlanOrderNo done");
+            }
+            done();
+          });
+        }
+      });
+    }
+  });
+});
+multi.hset("orderNo-id", order_no, order_id);
+multi.hset("order-entities", order_id, JSON.stringify(order));
+});
 // let args = [domain, uid, vid, dids, summary, payment];
 processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number) => {
   log.info("placeAnOrder");
@@ -394,10 +434,11 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                   let p1 = rpc(domain, servermap["vehicle"], null, "getDriverInfos", vid, did);
                   driver_promises.push(p1);
                 }
-                p.then((vehicle) => {
+                p.then((v) => {
                   if (err) {
                     log.info("call vehicle error");
                   } else {
+                    let vehicle = v["data"];
                     async_serial_driver(driver_promises, [], drivers => {
                       log.info("=============================555" + drivers);
                       let vid_doid = [];
@@ -459,10 +500,11 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
       done();
     } else {
       let p = rpc(domain, servermap["vehicle"], null, "getVehicleInfo", vid);
-      p.then((vehicle) => {
+      p.then((v) => {
         if (err) {
           log.info("call vehicle error");
         } else {
+          let vehicle = v["data"];
           let name: string = vehicle["owner"].name;
           let identity_no: string = vehicle["owner"].identity_no;
           let g_name: any;
@@ -490,7 +532,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
               let balance0 = balance * 0.2;
               let balance1 = balance * 0.8;
               let p2 = rpc(domain, servermap["wallet"], null, "createAccount", uid, type1, vid, balance0, balance1);
-              p2.then((vehicle) => {
+              p2.then((v) => {
                 if (err) {
                   log.info("call vehicle error");
                 } else {
@@ -565,15 +607,17 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                   insert_sale_order_items_recursive(db, done, order_id, pid, items, piids.map(piid => piid), {}, () => {
                     let p = rpc(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
                     let p1 = rpc(domain, servermap["plan"], null, "getPlan", pid);
-                    p.then((vehicle) => {
+                    p.then((v) => {
                       if (err) {
                         log.info("call vehicle error");
                       } else {
-                        p1.then((plan) => {
+                        let vehicle = v["data"];
+                        p1.then((p) => {
                           if (err) {
                             log.info("call quotation error");
                           }
                           else {
+                            let plan = p["data"];
                             let plan_items = plan["items"];
                             let piids = [];
                             for (let item of plan_items) {
@@ -818,7 +862,8 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
     cache.hget("underwrite-entities", uwid, function (err, result) {
       if (result) {
         let op = rpc<Object>(domain, servermap["operator"], null, "getOperatorInfo", opid);
-        op.then(operator => {
+        op.then(o => {
+          let operator = o["data"];
           let underwrite = JSON.parse(result);
           underwrite.real_place = real_place;
           underwrite.real_update_time = update_time;
@@ -1240,10 +1285,11 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
         };
         orders.push(order);
         let p = rpc<Object[]>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", row.vid);
-        p.then((vehicles) => {
+        p.then((v) => {
           if (err) {
             log.info("call vehicle error");
           } else {
+            let vehicles = v["data"];
             order["vehicle"] = vehicles;
             cache.hget("order_entities", row.id, function (err, result) {
               if (err) {
