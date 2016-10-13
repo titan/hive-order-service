@@ -50,6 +50,14 @@ let permissions: Permission[] = [["mobile", true], ["admin", true]];
 let allowAll: Permission[] = [["mobile", true], ["admin", true]];
 let mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 
+function formatNum(Source: string, Length: number): string {
+  let strTemp = "";
+  for (let i = 1; i <= Length - Source.length; i++) {
+    strTemp += "0";
+  }
+  return strTemp + Source;
+}
+
 // 获取所有订单
 svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number) => {
   // http://redis.io/commands/smembers
@@ -183,6 +191,8 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
       log.info("get redis error in getDriverOrders");
       log.info(err);
       rep({ code: 500, state: err });
+    } else if (result == null) {
+      rep({ code: 404, msg: "not found" });
     } else {
       log.info("replies==========" + result);
       rep({ code: 200, data: JSON.parse(result) });
@@ -262,6 +272,35 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
     }
   });
 });
+
+//更新订单编号
+svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction, order_no: string) => {
+  log.info(" updatePlanOrderNo", ctx);
+  if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.incr("order-no", (err, strNo) => {
+    if (err || !strNo) {
+      log.info(err + "cache incr err");
+      rep({ code: 500, msg: "未知错误" });
+    } else {
+      let new_no = order_no.substring(0, 14)
+      let strno = String(strNo);
+      let no: string = formatNum(strno, 7);
+      let new_order_no = new_no + no;
+      let args = [order_no, new_order_no];
+      ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
+      rep({ code: 200, order_no: new_order_no });
+    }
+  });
+});
+
+
 
 // 通过vid获取已生效计划单
 svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
