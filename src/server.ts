@@ -756,6 +756,15 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
   });
 });
 
-console.log("Start service at " + config.svraddr);
+svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
+  log.info("refresh");
+  ctx.msgqueue.send(msgpack.encode({ cmd: "refresh", args: null }));
+  rep({
+    code: 200,
+    msg: "Okay"
+  });
+});
+
+log.info("Start service at " + config.svraddr);
 
 svc.run();
