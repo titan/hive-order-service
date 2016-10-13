@@ -277,7 +277,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                           if (err) {
                             log.info("call quotation error");
                           } else {
-                            let quotation = q["data"]
+                            let quotation = q["data"];
                             async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
                               let plan_items = [];
                               for (let plan1 of plans2) {
@@ -382,9 +382,6 @@ processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: Don
       });
     }
   });
-});
-multi.hset("orderNo-id", order_no, order_id);
-multi.hset("order-entities", order_id, JSON.stringify(order));
 });
 // let args = [domain, uid, vid, dids, summary, payment];
 processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number) => {
@@ -1174,8 +1171,6 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
       done();
     } else {
       let orders: Object[] = [];
-      // let order: Object = null;
-      //vehicle, created_at: created_at1, start_at: start_at
       for (let row of result.rows) {
         let order = {
           summary: row.summary,
@@ -1249,8 +1244,8 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
           items = acc;
           for (let item of items) {
             for (let plan_item of plan_items) {
-              if (plan_item["id"] == item["piid"]) {
-                item["plan_item"] == plan_item;
+              if (plan_item["id"] === item["piid"]) {
+                item["plan_item"] === plan_item;
               }
             }
           }
