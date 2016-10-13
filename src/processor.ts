@@ -1162,7 +1162,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
 
 function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid", [], (e: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid", [], (e: Error, result: ResultSet) => {
       if (e) {
         reject(e);
       } else {
@@ -1184,23 +1184,23 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
               vehicle: null,
               drivers: [],
               dids: [row.e_pid],
+              created_at: row.o_created_at,
+              updated_at: row.o_created_at
             }
             orders[row.o_id] = order;
           }
         }
-        let pvs = Object.keys(orders).reduce((acc, oid) => {
+        let pvs = Object.keys(orders).map(oid => {
           const order = orders[oid];
-          let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", order.vehicle);
-          acc.push(p);
-          return acc;
-        }, []);
+          let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", order.vid);
+          return p;
+        });
         async_serial_ignore<Object>(pvs, [], (vehicles) => {
           for (const vehicle of vehicles) {
             for (const oid of Object.keys(orders)) {
               const order = orders[oid];
               if (vehicle["id"] === order.vid) {
                 order.vehicle = vehicle;
-                delete order["vid"];
                 break;
               }
             }
@@ -1208,7 +1208,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
           let pds = Object.keys(orders).reduce((acc, oid) => {
             const order = orders[oid];
             for (const did of order.dids) {
-              let p = rpc<Object>(domain, servermap["vehicle"], null, "getDriverInfos", order.vehicle, did);
+              let p = rpc<Object>(domain, servermap["vehicle"], null, "getDriverInfos", order.vid, did);
               acc.push(p);
             }
             return acc;
@@ -1229,9 +1229,8 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
             const multi = cache.multi();
             for (const oid of Object.keys(orders)) {
               const order = orders[oid];
-              delete order["dids"];
               multi.hset("order-entities", oid, JSON.stringify(order));
-              multi.zadd("driver-orders", new Date().getTime(), oid);
+              multi.zadd("driver-orders", order.updated_at.getTime(), oid);
             }
             multi.exec((err: Error, _: any[]) => {
               if (err) {
@@ -1247,101 +1246,142 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
   });
 }
 
-processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string) => {
-  log.info(" order refresh");
-  const pdo = refresh_driver_orders(db, cache, domain);
-  db.query("SELECT id, vid, type, state_code, state, summary, payment, start_at FROM orders", [], (err: Error, result: ResultSet) => {
-    if (err) {
-      log.error(err, " SELECT order query error");
-      done();
-    } else {
-      let orders: Object[] = [];
-      for (let row of result.rows) {
-        let order = {
-          summary: row.summary,
-          state: row.state,
-          payment: row.payment,
-          v_value: null,
-          p_price: null,
-          stop_at: null,
-          service_ratio: null,
-          plan: [],
-          items: [],
-          expect_at: null,
-          state_code: row.state_code,
-          id: null,
-          order_id: row.order_id,
-          qid: null,
-          type: row.type,
-          vehicle: [],
-          created_at: row.start_at,
-          start_at: null
-        };
-        orders.push(order);
-        let p = rpc<Object[]>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", row.vid);
-        p.then((v) => {
-          if (err) {
-            log.info("call vehicle error");
+function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const orders = {};
+        for (const row of result.rows) {
+          if (orders.hasOwnProperty(row.o_id)) {
+            orders[row.o_id]["items"].push({
+              id: row.oi_id,
+              pid: row.oi_pid,
+              piid: row.oi_piid,
+              plan_item: null,
+              price: row.oi_price
+            });
           } else {
-            let vehicles = v["data"];
-            order["vehicle"] = vehicles;
-            cache.hget("order_entities", row.id, function (err, result) {
-              if (err) {
-                log.info("get order_entities err in refresh" + err);
-                done();
-              } else {
-                let order_entities = JSON.parse(result);
-                order["v_value"] = order_entities.v_value;
-                order["p_price"] = order_entities.p_price;
-                order["stop_at"] = order_entities.stop_at;
-                order["service_ratio"] = order_entities.service_ratio;
-                order["id"] = order_entities.id;
-              }
-            });
-            db.query("SELECT pid FROM plan_order_ext", [], (err: Error, result1: ResultSet) => {
-              let plan_promises: Promise<Object>[] = [];
-              for (let row of result1.rows) {
-                let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", row["pid"]);
-                plan_promises.push(p1);
-              }
-              async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
-                order["plan"] = plans2;
-              }, (e: Error) => {
-                log.error(e);
-                done(); // close db and cache connection
-              });
-            });
-          }
-        });
-        let piids = [];
-        let plan_items = [];
-        for (let order of orders) {
-          let plans = order["plan"];
-          for (let plan of plans) {
-            for (let item of plan["items"]) {
-              plan_items.push(item);
-              piids.push(item["id"]);
+            const order = {
+              id: row.o_id,
+              type: row.o_type,
+              state_code: row.o_state_code,
+              state: row.o_state,
+              summary: row.o_summary,
+              payment: row.o_payment,
+              start_at: row.o_start_at,
+              stop_at: row.o_stop_at,
+              vid: row.o_vid,
+              vehicle: null,
+              pid: row.e_pid,
+              plan: null,
+              qid: row.e_qid,
+              quotation: null,
+              service_ratio: row.e_service_ratio,
+              expact_at: row.e_expact_at,
+              items: [{
+                id: row.oi_id,
+                pid: row.oi_pid,
+                piid: row.oi_piid,
+                plan_item: null,
+                price: row.oi_price
+              }],
+              created_at: row.o_created_at,
+              updated_at: row.o_updated_at
             }
+            orders[row.o_id] = order;
           }
         }
-        let items: Object[] = [];
-        select_order_item_recursive(db, done, piids.map(piid => piid), {}, (acc) => {
-          items = acc;
-          for (let item of items) {
-            for (let plan_item of plan_items) {
-              if (plan_item["id"] === item["piid"]) {
-                item["plan_item"] === plan_item;
+        const oids = Object.keys(orders);
+        const vidstmp = [];
+        const qidstmp = [];
+        const pidstmp = [];
+        const piidstmp = [];
+        for (const oid of oids) {
+          vidstmp.push(orders[oid]["vid"]);
+          qidstmp.push(orders[oid]["qid"]);
+          pidstmp.push(orders[oid]["pid"]);
+          for (const item of orders[oid]["items"]) {
+            piidstmp.push(item["plan_item"]);
+          }
+        }
+        const vids = [... new Set(vidstmp)];
+        const qids = [... new Set(qidstmp)];
+        const pids = [... new Set(pidstmp)];
+
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", vid));
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+          for (const vehicle of vehicles) {
+            for (const oid of oids) {
+              const order = orders[oid];
+              if (vehicle["id"] === order["vid"]) {
+                order["vehicle"] = vehicle; // a vehicle may belong to many orders
               }
             }
           }
+          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
+          async_serial_ignore<Object>(pqs, [], (qreps) => {
+            const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+            for (const quotation of quotations) {
+              for (const oid of oids) {
+                const order = orders[oid];
+                if (quotation["id"] === order["qid"]) {
+                  order["quotation"] = quotation;
+                  break; // a quotation only belongs to an order
+                }
+              }
+            }
+            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], null, "getPlan", pid));
+            async_serial_ignore<Object>(pps, [], (preps) => {
+              const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
+              for (const oid of oids) {
+                const order = orders[oid];
+                for (const plan of plans) {
+                  if (plan["id"] === order["pid"]) {
+                    order["plan"] = plan; // a plan may belong to many orders
+                  }
+                  for (const planitem of plan["items"]) {
+                    for (const orderitem of order["items"]) {
+                      if (planitem["id"] === orderitem["piid"]) {
+                        orderitem["plan_item"] = planitem;
+                      }
+                    }
+                  }
+                }
+              }
+              const multi = cache.multi();
+              for (const oid of oids) {
+                const order = orders[oid];
+                multi.hset("order-entities", oid, JSON.stringify(order));
+                multi.zadd("plan-orders", order.updated_at.getTime(), oid);
+              }
+              multi.exec((err: Error, _: any[]) => {
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            });
+          });
         });
-        order["items"] = items;
       }
-    }
+    });
+  });
+}
+
+processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string) => {
+  log.info("refresh");
+  const pdo = refresh_driver_orders(db, cache, domain);
+  const ppo = refresh_plan_orders(db, cache, domain);
+  let ps = [ppo, pdo];
+  async_serial_ignore<void>(ps, [], () => {
+    log.info("refresh done!");
+    done();
   });
 });
-
-
 
 processor.run();
 
