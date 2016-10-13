@@ -1248,7 +1248,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
 
 function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id", [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1372,16 +1372,242 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
   });
 }
 
+function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const orders = {};
+        for (const row of result.rows) {
+          if (orders.hasOwnProperty(row.o_id)) {
+            orders[row.o_id]["items"].push({
+              id: row.oi_id,
+              piid: row.oi_piid,
+              plan_item: null,
+              price: row.oi_price
+            });
+          } else {
+            const order = {
+              id: row.o_id,
+              type: row.o_type,
+              state_code: row.o_state_code,
+              state: row.o_state,
+              summary: row.o_summary,
+              payment: row.o_payment,
+              start_at: row.o_start_at,
+              stop_at: row.o_stop_at,
+              vid: row.o_vid,
+              vehicle: null,
+              pid: row.e_pid,
+              plan: null,
+              qid: row.e_qid,
+              quotation: null,
+              items: [{
+                id: row.oi_id,
+                piid: row.oi_piid,
+                plan_item: null,
+                price: row.oi_price
+              }],
+              created_at: row.o_created_at,
+              updated_at: row.o_updated_at
+            }
+            orders[row.o_id] = order;
+          }
+        }
+
+        const oids = Object.keys(orders);
+        const vidstmp = [];
+        const qidstmp = [];
+        const pidstmp = [];
+        const piidstmp = [];
+        for (const oid of oids) {
+          vidstmp.push(orders[oid]["vid"]);
+          qidstmp.push(orders[oid]["qid"]);
+          pidstmp.push(orders[oid]["pid"]);
+          for (const item of orders[oid]["items"]) {
+            piidstmp.push(item["plan_item"]);
+          }
+        }
+        const vids = [... new Set(vidstmp)];
+        const qids = [... new Set(qidstmp)];
+        const pids = [... new Set(pidstmp)];
+
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", vid));
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+          for (const vehicle of vehicles) {
+            for (const oid of oids) {
+              const order = orders[oid];
+              if (vehicle["id"] === order["vid"]) {
+                order["vehicle"] = vehicle; // a vehicle may belong to many orders
+              }
+            }
+          }
+          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
+          async_serial_ignore<Object>(pqs, [], (qreps) => {
+            const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+            for (const quotation of quotations) {
+              for (const oid of oids) {
+                const order = orders[oid];
+                if (quotation["id"] === order["qid"]) {
+                  order["quotation"] = quotation;
+                  break; // a quotation only belongs to an order
+                }
+              }
+            }
+            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], null, "getPlan", pid));
+            async_serial_ignore<Object>(pps, [], (preps) => {
+              const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
+              for (const oid of oids) {
+                const order = orders[oid];
+                for (const plan of plans) {
+                  if (plan["id"] === order["pid"]) {
+                    order["plan"] = plan; // a plan may belong to many orders
+                  }
+                  for (const planitem of plan["items"]) {
+                    for (const orderitem of order["items"]) {
+                      if (planitem["id"] === orderitem["piid"]) {
+                        orderitem["plan_item"] = planitem;
+                      }
+                    }
+                  }
+                }
+              }
+              const multi = cache.multi();
+              for (const oid of oids) {
+                const order = orders[oid];
+                multi.hset("order-entities", oid, JSON.stringify(order));
+                multi.zadd("sale-orders", order.updated_at.getTime(), oid);
+              }
+              multi.exec((err: Error, _: any[]) => {
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            });
+          });
+        });
+      }
+    });
+  });
+}
+
+function refresh_underwrite(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u LEFT JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const underwrites = {};
+        for (const row of result.rows) {
+          if (underwrites.hasOwnProperty(row.u_id)) {
+            underwrites[row.u_id]["photos"].push(trim(row.up_photo));
+          } else {
+            underwrites[row.u_id] = {
+              id: row.u_id,
+              oid: row.u_oid,
+              order: null,
+              opid: row.u_opid,
+              operator: null,
+              plan_time: row.u_plan_time,
+              real_time: row.u_real_time,
+              validate_place: trim(row.u_validate_place),
+              validate_update_time: row.u_validate_update_time,
+              real_place: trim(row.u_real_place),
+              real_update_time: row.u_real_update_time,
+              certificate_state: row.u_certificate_state,
+              problem_type: trim(row.u_problem_type),
+              problem_description: trim(row.u_problem_description),
+              note: trim(row.u_note),
+              note_update_time: row.u_note_update_time,
+              underwrite_result: trim(row.u_underwrite_result),
+              result_update_time: row.u_result_update_time,
+              created_at: row.u_created_at,
+              updated_at: row.u_updated_at,
+              photos: [trim(row.up_photo)]
+            };
+          }
+        }
+        const uwids = Object.keys(underwrites);
+
+        const oridstmp = [];
+        const opidstmp = [];
+
+        for (const uwid of uwids) {
+          const underwrite = underwrites[uwid];
+          if (underwrite.opid) {
+            opidstmp.push(underwrite.opid);
+          }
+          oridstmp.push(underwrite.oid);
+        }
+
+        const orids = [... new Set(oridstmp)];
+        const opids = [... new Set(opidstmp)];
+
+        const multi = cache.multi();
+        for (const oid of orids) {
+          multi.hget("order-entities", oid);
+        }
+        multi.exec((e: Error, results: string[]) => {
+          if (e) {
+            reject(e);
+          } else {
+            const orders = results.filter(r => r !== null).map(r => JSON.parse(r));
+            for (const order of orders) {
+              for (const uwid of uwids) {
+                const underwrite = underwrites[uwid];
+                if (underwrite.oid === order.id) {
+                  underwrite["order"] = order;
+                }
+              }
+            }
+            let pops = opids.map(opid => rpc<Object>(domain, servermap["operator"], null, "getOperator", opid));
+            async_serial_ignore<Object>(pops, [], (opreps) => {
+              const operators = opreps.filter(o => o["code"] === 200).map(o => o["data"]);
+              for (const operator of operators) {
+                for (const uwid of uwids) {
+                  const underwrite = underwrites[uwid];
+                  if (underwrite.opid === operator.id) {
+                    underwrite["operator"] = operator;
+                  }
+                }
+              }
+              const multi1 = cache.multi();
+              for (const uwid of uwids) {
+                const underwrite = underwrites[uwid];
+                multi1.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+              }
+            });
+          }
+        });
+      }
+    });
+  });
+}
+
 processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string) => {
   log.info("refresh");
   const pdo = refresh_driver_orders(db, cache, domain);
   const ppo = refresh_plan_orders(db, cache, domain);
-  let ps = [ppo, pdo];
+  const pso = refresh_sale_orders(db, cache, domain);
+  const puw = refresh_underwrite(db, cache, domain);
+  let ps = [ppo, pdo, pso, puw];
   async_serial_ignore<void>(ps, [], () => {
     log.info("refresh done!");
     done();
   });
 });
+
+function trim(str: string) {
+  if (str) {
+    return str.trim();
+  } else {
+    return null;
+  }
+}
 
 processor.run();
 
