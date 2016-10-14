@@ -195,7 +195,7 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
     });
   }
 }
-processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, order_id: string, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, callback: string) => {
+processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, order_id: string, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, cbflag: string) => {
   log.info("placeOrder");
   let event_id = uuid.v1();
   let state_code = 1;
@@ -204,8 +204,17 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
   let plan_data1 = "新增plan计划";
   let plan_data = JSON.stringify(plan_data1);
   cache.incr("order-no", (err, strNo) => {
-    if (err || !strNo) {
+    if (err) {
       log.info(err + "cache incr err");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
+    } else if (!strNo) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 404,
+        msg: "No new order no"
+      }));
     } else {
       let strno = String(strNo);
       let no: string = formatNum(strno, 7);
@@ -228,19 +237,31 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
       db.query("BEGIN", (err: Error) => {
         if (err) {
           log.error(err, "query error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
         } else {
           db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
             if (err) {
-              db.query("ROLLBACK", [], (err: Error) => {
+              db.query("ROLLBACK", [], (err1: Error) => {
                 log.error(err, "insert into orders error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               });
             } else {
               db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, plan_data], (err: Error, result: ResultSet) => {
                 if (err) {
-                  db.query("ROLLBACK", [], (err: Error) => {
+                  db.query("ROLLBACK", [], (err1: Error) => {
                     log.error(err, "insert into order_events error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   });
                 } else {
@@ -258,10 +279,10 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                     payment: payment,
                     v_value: v_value,
                     expect_at: expect_at,
-                    callback: callback
+                    cbflag: cbflag
                   };
                   insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
-                    let p = rpc<Object>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                    let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid);
                     let p2 = rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid);
                     let plan_promises: Promise<Object>[] = [];
                     for (let pid of pids) {
@@ -271,11 +292,21 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                     p.then((v) => {
                       if (err) {
                         log.info("call vehicle error");
+                        cache.setex(cbflag, 30, JSON.stringify({
+                          code: 500,
+                          msg: err.message
+                        }));
+                        done();
                       } else {
                         let vehicle = v["data"];
                         p2.then((q) => {
                           if (err) {
                             log.info("call quotation error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err.message
+                            }));
+                            done();
                           } else {
                             let quotation = q["data"];
                             async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
@@ -326,13 +357,25 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                               multi.exec((err3, replies) => {
                                 if (err3) {
                                   log.error(err3, "query redis error");
+                                  cache.setex(cbflag, 30, JSON.stringify({
+                                    code: 500,
+                                    msg: err3.message
+                                  }));
                                 } else {
                                   log.info("placeAnOrder: done");
+                                  cache.setex(cbflag, 30, JSON.stringify({
+                                    code: 200,
+                                    data: order_id
+                                  }));
                                 }
                                 done(); // close db and cache connection
                               });
                             }, (e: Error) => {
                               log.error(e);
+                              cache.setex(cbflag, 30, JSON.stringify({
+                                code: 500,
+                                msg: e.message
+                              }));
                               done(); // close db and cache connection
                             });
                           }
@@ -351,17 +394,37 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
 });
 
 
-processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string) => {
-  log.info("updatePlanOrderNo" + order_no);
+processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string, cbflag) => {
+  log.info("updateOrderNo" + order_no);
   cache.hget("orderNo-id", order_no, function (err, result) {
-    if (err || result == null) {
+    if (err) {
       log.info(err + "get order_id err or order_id not found");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
+      done();
+    } else if (result === null) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 404,
+        msg: "Order id not found"
+      }));
       done();
     } else {
       let order_id = result;
       cache.hget("order-entities", order_id, function (err1, result1) {
-        if (err1 || result1 == null) {
+        if (err1) {
           log.info(err1 + "get order_entities err or order_entities not found");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err1.message
+          }));
+          done();
+        } else if (result1 == null) {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 404,
+            msg: "Order not found"
+          }));
           done();
         } else {
           let order_entities = JSON.parse(result1);
@@ -373,8 +436,16 @@ processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: Don
           multi.exec((err2, result2) => {
             if (err2) {
               log.error(err2, "query redis error");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 500,
+                msg: err2.message
+              }));
             } else {
-              log.info("updatePlanOrderNo done");
+              log.info("updateOrderNo done");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 200,
+                data: new_order_no
+              }));
             }
             done();
           });
@@ -384,7 +455,7 @@ processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: Don
   });
 });
 // let args = [domain, uid, vid, dids, summary, payment];
-processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number) => {
+processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number, cbflag: string) => {
   log.info("placeAnOrder");
   let order_id = uuid.v1();
   let item_id = uuid.v1();
@@ -400,12 +471,20 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       // vid, dids, summary, payment
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error, result: ResultSet) => {
         if (err) {
           log.error(err, " insert orders  error in placeAnDriverOrder");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
           return;
         }
@@ -413,6 +492,10 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: ResultSet) => {
             if (err) {
               log.error(err, "insert info order_events error in placeAnDriverOrder");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 500,
+                msg: err.message
+              }));
               done();
               return;
             } else {
@@ -425,15 +508,20 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                 payment: payment
               };
               insert_driver_order_recursive(db, done, order_id, args2, dids.map(did => did), {}, () => {
-                let p = rpc(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                let p = rpc(domain, servermap["vehicle"], null, "getVehicle", vid);
                 let driver_promises = [];
                 for (let did of dids) {
-                  let p1 = rpc(domain, servermap["vehicle"], null, "getDriverInfos", vid, did);
+                  let p1 = rpc(domain, servermap["vehicle"], null, "getDrivers", vid, did);
                   driver_promises.push(p1);
                 }
                 p.then((v) => {
                   if (err) {
                     log.info("call vehicle error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
+                    done();
                   } else {
                     let vehicle = v["data"];
                     async_serial_driver(driver_promises, [], drivers => {
@@ -442,36 +530,36 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                       cache.hget("vid-doid", vid, function (err, result1) {
                         if (err) {
                           log.info("get vid-doid error");
-                        } else if (result1 == null) {
-                          cache.hset("vid-doid", vid, order_id, function (err, result2) {
-                            if (err) {
-                              log.info("hset vid-doid in placeAnDriverOrder");
-                            } else {
-                              log.info("success set vid-doid");
-                            }
-                          });
-                        } else {
-                          vid_doid = result1;
+                        } else if (result1) {
+                          vid_doid = JSON.parse(result1);
                         }
-                      });
-                      vid_doid.push(order_id);
-                      let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
-                      let order_drivers = { drivers: drivers, vehicle: vehicle };
-                      let multi = cache.multi();
-                      multi.zadd("driver_orders", created_at, order_id);
-                      multi.zadd("orders", created_at, order_id);
-                      multi.zadd("orders-" + uid, created_at, order_id);
-                      multi.hset("vid-doid", vid, vid_doid);
-                      multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
-                      multi.hset("order-entities", order_id, JSON.stringify(order));
-                      multi.exec((err3, replies) => {
-                        if (err3) {
-                          log.error(err3, "query redis error");
-                          done();
-                        } else {
-                          log.info("placeAnDriverOrder: done");
-                          done(); // close db and cache connection
-                        }
+                        vid_doid.push(order_id);
+                        let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
+                        let order_drivers = { drivers: drivers, vehicle: vehicle };
+                        let multi = cache.multi();
+                        multi.zadd("driver_orders", created_at, order_id);
+                        multi.zadd("orders", created_at, order_id);
+                        multi.zadd("orders-" + uid, created_at, order_id);
+                        multi.hset("vid-doid", vid, vid_doid);
+                        multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
+                        multi.hset("order-entities", order_id, JSON.stringify(order));
+                        multi.exec((err3, replies) => {
+                          if (err3) {
+                            log.error(err3, "query redis error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err3.message
+                            }));
+                            done();
+                          } else {
+                            log.info("placeAnDriverOrder: done");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 200,
+                              data: order_id
+                            }));
+                            done(); // close db and cache connection
+                          }
+                        });
                       });
                     });
                   }
@@ -484,76 +572,103 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
     }
   });
 });
-processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: number, state: string) => {
+
+function createGroup(domain: string, order: Object, uid: string) {
+  return new Promise<any>((resolve, reject) => {
+    let vehicle = order["vehicle"];
+    let name: string = vehicle["owner"].name;
+    let identity_no: string = vehicle["owner"].identity_no;
+    let g_name: string;
+    let apportion: number = 0.20;
+    if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
+      g_name = name + "先生";
+    } else {
+      g_name = name + "女士";
+    }
+    let p = rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
+    p.then(r => {
+      resolve(r);
+    }).catch((e: Error) => {
+      reject(e);
+    });
+  });
+}
+
+function createAccount(domain: string, order: Object, uid: string) {
+  return new Promise<any>((resolve, reject) => {
+    const vid = order["vehicle"]["id"];
+    const balance = order["summary"];
+    const balance0 = balance * 0.2;
+    const balance1 = balance * 0.8;
+    let p = rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1);
+    p.then(r => {
+      resolve(r);
+    }).catch((e: Error) => {
+      reject(e);
+    });
+  });
+}
+
+processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
   log.info("updateOrderState");
   let code = state_code;
   let type1 = 1;
   let balance: number = null;
   let start_at = null;
-  db.query("UPDATE orders SET state_code = $1, state = $2 WHERE id = $3", [code, state, order_id], (err: Error, result: ResultSet) => {
+  db.query("UPDATE orders SET state_code = $1, state = $2 WHERE id = $3", [state_code, state, order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
-      log.info("err,updateOrderState error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
-      let p = rpc(domain, servermap["vehicle"], null, "getVehicleInfo", vid);
-      p.then((v) => {
+      cache.hget("order-entities", order_id, function (err, reply) {
         if (err) {
-          log.info("call vehicle error");
+          log.info("err,get redis error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
+          done();
+        } else if (!reply) {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 404,
+            msg: "Order not found!"
+          }));
+          done();
         } else {
-          let vehicle = v["data"];
-          let name: string = vehicle["owner"].name;
-          let identity_no: string = vehicle["owner"].identity_no;
-          let g_name: any;
-          let apportion: number = 0.20;
-          if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
-            g_name = name + "先生";
-          } else {
-            g_name = name + "女士";
+          let order = JSON.parse(reply);
+          let ps = [];
+          if (state_code === 3) {
+            ps.push(createGroup(domain, order, uid));
+          } else if (state_code === 2) {
+            ps.push(createAccount(domain, order, uid));
           }
-          let p1 = rpc(domain, servermap["group"], null, "createGroup", g_name, vid, apportion, uid);
-          p1.then((result2) => {
-            if (err) {
-              log.info("call group error");
-            } else {
-              log.info("call group success for createGroup");
-            }
-          });
-          cache.hget("order-entities", order_id, function (err, replise) {
-            if (err) {
-              log.info("err,get redis error");
-              done();
-            } else {
-              let order_entities = JSON.parse(replise);
-              balance = order_entities["summary"];
-              let balance0 = balance * 0.2;
-              let balance1 = balance * 0.8;
-              let p2 = rpc(domain, servermap["wallet"], null, "createAccount", uid, type1, vid, balance0, balance1);
-              p2.then((v) => {
-                if (err) {
-                  log.info("call vehicle error");
-                } else {
-                  order_entities["state_code"] = state_code;
-                  order_entities["state"] = state;
-                  if (start_at !== null) {
-                    order_entities["start_at"] = start_at;
-                  } else {
-                    let multi = cache.multi();
-                    multi.hset("vid-poid", vid, order_id);
-                    multi.hset("order-entities", order_id, JSON.stringify(order_entities));
-                    multi.exec((err, result1) => {
-                      if (err) {
-                        log.info("err:hset order_entities error");
-                        done();
-                      } else {
-                        log.info("db end in updateOrderState");
-                        done();
-                      }
-                    });
-                  }
-                }
-              });
-            }
+
+          async_serial_ignore(ps, [], (_) => {
+            order["state_code"] = state_code;
+            order["state"] = state;
+            let multi = cache.multi();
+            multi.hset("order-entities", order_id, JSON.stringify(order));
+            multi.setex(cbflag, 30, JSON.stringify({
+              code: 200,
+              data: "Success"
+            }));
+            multi.exec((err, result1) => {
+              if (err) {
+                log.info("err:hset order_entities error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
+                done();
+              } else {
+                log.info("db end in updateOrderState");
+                done();
+              }
+            });
           });
         }
       });
@@ -562,7 +677,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
 });
 
 // let args = {uid,vid,items,summary,payment};{piid: price}
-processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string) => {
+processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string, cbflag: string) => {
   log.info("placeAnOrder");
   let item_id = uuid.v1();
   let event_id = uuid.v1();
@@ -578,85 +693,113 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1, $2, $3, $4, $5, $6, $7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
         if (err) {
-          db.query("ROLLBACK", [], (err: Error) => {
+          db.query("ROLLBACK", [], (err1: Error) => {
             log.error(err, "insert into orders error in placeAnSaleOrder");
+            cache.setex(cbflag, 30, JSON.stringify({
+              code: 500,
+              msg: err.message
+            }));
             done();
           });
         } else {
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
             if (err) {
-              db.query("ROLLBACK", [], (err: Error) => {
+              db.query("ROLLBACK", [], (err1: Error) => {
                 log.error(err, "insert into order_events error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               });
             } else {
               db.query("INSERT INTO sale_order_ext(id, oid,pid,qid) VALUES($1, $2,$3,$4)", [event_id, order_id, pid, qid], (err: Error, result: ResultSet) => {
                 if (err) {
-                  db.query("ROLLBACK", [], (err: Error) => {
+                  db.query("ROLLBACK", [], (err1: Error) => {
                     log.error(err, "insert into order_events error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   });
                 } else {
                   insert_sale_order_items_recursive(db, done, order_id, pid, items, piids.map(piid => piid), {}, () => {
-                    let p = rpc(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                    let p = rpc(domain, servermap["vehicle"], null, "getVehicle", vid);
                     let p1 = rpc(domain, servermap["plan"], null, "getPlan", pid);
-                    p.then((v) => {
-                      if (err) {
-                        log.info("call vehicle error");
+                    async_serial<Object>([p, p1], [], (obj: Object[]) => {
+                      if (obj[0]["code"] !== 200 || obj[1]["code"] !== 200) {
+                        cache.setex(cbflag, 30, JSON.stringify({
+                          code: 404,
+                          msg: "Vehicle or plan not found"
+                        }));
+                        done();
                       } else {
-                        let vehicle = v["data"];
-                        p1.then((p) => {
-                          if (err) {
-                            log.info("call quotation error");
+                        let vehicle = obj[0]["data"];
+                        let plan = obj[1]["data"];
+                        let plan_items = plan["items"];
+                        let piids = [];
+                        for (let item of plan_items) {
+                          piids.push(item.id);
+                        }
+                        let prices = [];
+                        for (let item in items) {
+                          prices.push(items[item]);
+                        }
+                        let items1 = [];
+                        log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
+                        let len = Math.min(piids.length, prices.length, plan_items.length);
+                        log.info("=====length" + len);
+                        for (let i = 0; i < len; i++) {
+                          let item_id = piids.shift();
+                          let price = prices.shift();
+                          let plan_item = plan_items.shift();
+                          items.push({ item_id, price, plan_item });
+                        }
+                        let created_at = new Date().getTime();
+                        let created_at1 = getLocalTime(created_at / 1000);
+                        let start_at = null;
+                        let stop_at = null;
+                        let order = {
+                          summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at, stop_at: stop_at
+                        };
+                        let multi = cache.multi();
+                        multi.zadd("sale-orders", created_at, order_id);
+                        multi.zadd("orders", created_at, order_id);
+                        multi.zadd("orders-" + uid, created_at, order_id);
+                        multi.hset("vehicle-order", vid, order_id);
+                        multi.hset("orderid-vid", order_id, vid);
+                        multi.hset("order-entities", order_id, JSON.stringify(order));
+                        multi.exec((err3, replies) => {
+                          if (err3) {
+                            log.error(err3, "query error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err3.message
+                            }));
+                          } else {
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 200,
+                              data: order_id
+                            }));
                           }
-                          else {
-                            let plan = p["data"];
-                            let plan_items = plan["items"];
-                            let piids = [];
-                            for (let item of plan_items) {
-                              piids.push(item.id);
-                            }
-                            let prices = [];
-                            for (let item in items) {
-                              prices.push(items[item]);
-                            }
-                            let items1 = [];
-                            log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
-                            let len = Math.min(piids.length, prices.length, plan_items.length);
-                            log.info("=====length" + len);
-                            for (let i = 0; i < len; i++) {
-                              let item_id = piids.shift();
-                              let price = prices.shift();
-                              let plan_item = plan_items.shift();
-                              items.push({ item_id, price, plan_item });
-                            }
-                            let created_at = new Date().getTime();
-                            let created_at1 = getLocalTime(created_at / 1000);
-                            let start_at = null;
-                            let stop_at = null;
-                            let order = {
-                              summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at, stop_at: stop_at
-                            };
-                            let multi = cache.multi();
-                            multi.zadd("sale-orders", created_at, order_id);
-                            multi.zadd("orders", created_at, order_id);
-                            multi.zadd("orders-" + uid, created_at, order_id);
-                            multi.hset("vehicle-order", vid, order_id);
-                            multi.hset("orderid-vid", order_id, vid);
-                            multi.hset("order-entities", order_id, JSON.stringify(order));
-                            multi.exec((err3, replies) => {
-                              if (err3) {
-                                log.error(err3, "query error");
-                              }
-                              done(); // close db and cache connection
-                            });
-                          }
+                          done(); // close db and cache connection
                         });
                       }
+                    }, (e: Error) => {
+                      cache.setex(cbflag, 30, JSON.stringify({
+                        code: 500,
+                        msg: e.message
+                      }));
+                      done();
                     });
                   });
                 }
@@ -669,8 +812,8 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
   });
 });
 
-processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number) => {
-  log.info("updateAnSaleOrder");
+processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number, cbflag: string) => {
+  log.info("UpdateSaleOrder");
   // orderNo-id
   let update_at = new Date;
   let piids: Object[] = [];
@@ -682,12 +825,20 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
         if (err) {
           log.info(err);
           log.info("err,updateOrderState error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
         }
         else {
@@ -695,6 +846,10 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
             cache.hget("order-entities", order_id, function (err, result) {
               if (err) {
                 log.info("err,get redis error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               } else {
                 log.info("================" + result);
@@ -711,9 +866,17 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
                 multi.exec((err, result1) => {
                   if (err) {
                     log.info("err:hset order_entities error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   } else {
                     log.info("db end in updateOrderState");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 200,
+                      data: order_id
+                    }));
                     done();
                   }
                 });
@@ -858,7 +1021,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
   async_serial<void>(promises, [], () => {
     cache.hget("underwrite-entities", uwid, function (err, result) {
       if (result) {
-        let op = rpc<Object>(domain, servermap["operator"], null, "getOperatorInfo", opid);
+        let op = rpc<Object>(domain, servermap["operator"], null, "getOperator", opid);
         op.then(o => {
           let operator = o["data"];
           let underwrite = JSON.parse(result);
@@ -1193,7 +1356,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
         const oids = Object.keys(orders);
         let pvs = oids.map(oid => {
           const order = orders[oid];
-          let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", order.vid);
+          let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", order.vid);
           return p;
         });
         async_serial_ignore<Object>(pvs, [], (vreps) => {
@@ -1209,7 +1372,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
           let pds = oids.reduce((acc, oid) => {
             const order = orders[oid];
             for (const did of order.dids) {
-              let p = rpc<Object>(domain, servermap["vehicle"], null, "getDriverInfos", order.vid, did);
+              let p = rpc<Object>(domain, servermap["vehicle"], null, "getDrivers", order.vid, did);
               acc.push(p);
             }
             return acc;
@@ -1310,7 +1473,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
         const qids = [... new Set(qidstmp)];
         const pids = [... new Set(pidstmp)];
 
-        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", vid));
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid));
         async_serial_ignore<Object>(pvs, [], (vreps) => {
           const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
           for (const vehicle of vehicles) {
@@ -1436,7 +1599,7 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
         const qids = [... new Set(qidstmp)];
         const pids = [... new Set(pidstmp)];
 
-        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", vid));
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid));
         async_serial_ignore<Object>(pvs, [], (vreps) => {
           const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
           for (const vehicle of vehicles) {
