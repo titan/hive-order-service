@@ -484,13 +484,13 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
     }
   });
 });
-processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: string, state: string) => {
+processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: number, state: string) => {
   log.info("updateOrderState");
-  let code = parseInt(state_code, 10);
+  let code = state_code;
   let type1 = 1;
   let balance: number = null;
   let start_at = null;
-  db.query("UPDATE orders SET state_code = $1,state = $2 WHERE id = $3", [code, state, order_id], (err: Error, result: ResultSet) => {
+  db.query("UPDATE orders SET state_code = $1, state = $2 WHERE id = $3", [code, state, order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
       log.info("err,updateOrderState error");

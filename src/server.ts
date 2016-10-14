@@ -239,8 +239,8 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
 });
 
 // 更新订单状态
-svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
-  if (!verify([uuidVerifier("uid", uid)], (errors: string[]) => {
+svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: string, state_code: number, state: string) => {
+  if (!verify([uuidVerifier("uid", uid), stringVerifier("order_no", order_no), numberVerifier("state_code", state_code), stringVerifier("state", state)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -249,26 +249,27 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
     return;
   }
   ctx.cache.hget(orderNo_id, order_no, function (err, result) {
-    if (err || result == null) {
-      log.info("get redis error in getDriverOrders");
-      log.info(err);
-      rep({ code: 404, state: "not found" });
-    } else {
+    if (err) {
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
       let order_id = result;
       ctx.cache.hget(orderid_vid, order_id, function (err1, result1) {
-        if (err || result1 == null) {
+        if (err1) {
           log.info("get redis error in get orderid_vid" + err1);
-          rep({ code: 404, state: "not found the vid" });
-        } else {
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
           let vid = result1;
           let domain = ctx.domain;
-          log.info("==========" + result);
           let args = [domain, uid, vid, order_id, state_code, state];
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
-          rep({ code: 200 });
+          rep({ code: 200, data: "Success" });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
         }
       });
+    } else {
+      rep({ code: 404, msg: "Order no not found" });
     }
   });
 });
@@ -295,7 +296,7 @@ svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction,
       let new_order_no = new_no + no;
       let args = [order_no, new_order_no];
       ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-      rep({ code: 200, order_no: new_order_no });
+      rep({ code: 200, data: new_order_no });
     }
   });
 });
