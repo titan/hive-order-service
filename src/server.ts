@@ -758,7 +758,7 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
 
 svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
   log.info("refresh");
-  ctx.msgqueue.send(msgpack.encode({ cmd: "refresh", args: null }));
+  ctx.msgqueue.send(msgpack.encode({ cmd: "refresh", args: [ctx.domain] }));
   rep({
     code: 200,
     msg: "Okay"

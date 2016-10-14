@@ -1190,22 +1190,23 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
             orders[row.o_id] = order;
           }
         }
-        let pvs = Object.keys(orders).map(oid => {
+        const oids = Object.keys(orders);
+        let pvs = oids.map(oid => {
           const order = orders[oid];
           let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicleInfo", order.vid);
           return p;
         });
-        async_serial_ignore<Object>(pvs, [], (vehicles) => {
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
           for (const vehicle of vehicles) {
-            for (const oid of Object.keys(orders)) {
+            for (const oid of oids) {
               const order = orders[oid];
               if (vehicle["id"] === order.vid) {
                 order.vehicle = vehicle;
-                break;
               }
             }
           }
-          let pds = Object.keys(orders).reduce((acc, oid) => {
+          let pds = oids.reduce((acc, oid) => {
             const order = orders[oid];
             for (const did of order.dids) {
               let p = rpc<Object>(domain, servermap["vehicle"], null, "getDriverInfos", order.vid, did);
@@ -1216,18 +1217,17 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
           async_serial_ignore<Object>(pds, [], (drvreps) => {
             const drivers = drvreps.filter(d => d["code"] === 200).map(d => d["data"]);
             for (const driver of drivers) {
-              for (const oid of Object.keys(orders)) {
+              for (const oid of oids) {
                 const order = orders[oid];
                 for (const drv of order.drivers) {
                   if (drv === driver["id"]) {
                     order.drivers.push(driver);
-                    break;
                   }
                 }
               }
             }
             const multi = cache.multi();
-            for (const oid of Object.keys(orders)) {
+            for (const oid of oids) {
               const order = orders[oid];
               multi.hset("order-entities", oid, JSON.stringify(order));
               multi.zadd("driver-orders", order.updated_at.getTime(), oid);
@@ -1248,7 +1248,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
 
 function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id", [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1321,6 +1321,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               }
             }
           }
+          console.log("responses: %j", vreps);
           let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
           async_serial_ignore<Object>(pqs, [], (qreps) => {
             const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
@@ -1339,10 +1340,12 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               for (const oid of oids) {
                 const order = orders[oid];
                 for (const plan of plans) {
+                  log.info("plan id: %s", plan["id"]);
                   if (plan["id"] === order["pid"]) {
                     order["plan"] = plan; // a plan may belong to many orders
                   }
                   for (const planitem of plan["items"]) {
+                    log.info("plan item id: %s", planitem["id"]);
                     for (const orderitem of order["items"]) {
                       if (planitem["id"] === orderitem["piid"]) {
                         orderitem["plan_item"] = planitem;
@@ -1519,7 +1522,7 @@ function refresh_underwrite(db: PGClient, cache: RedisClient, domain: string) {
               real_place: trim(row.u_real_place),
               real_update_time: row.u_real_update_time,
               certificate_state: row.u_certificate_state,
-              problem_type: trim(row.u_problem_type),
+              problem_type: row.u_problem_type,
               problem_description: trim(row.u_problem_description),
               note: trim(row.u_note),
               note_update_time: row.u_note_update_time,
@@ -1594,7 +1597,8 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
   const ppo = refresh_plan_orders(db, cache, domain);
   const pso = refresh_sale_orders(db, cache, domain);
   const puw = refresh_underwrite(db, cache, domain);
-  let ps = [ppo, pdo, pso, puw];
+  //let ps = [ppo, pdo, pso, puw];
+  let ps = [ppo];
   async_serial_ignore<void>(ps, [], () => {
     log.info("refresh done!");
     done();
@@ -1611,4 +1615,4 @@ function trim(str: string) {
 
 processor.run();
 
-console.log("Start processor at " + config.addr);
+log.info("Start processor at " + config.addr);
