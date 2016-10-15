@@ -1307,7 +1307,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
     cb(acc);
   } else {
     let piid = piids.shift();
-    db.query("SELECT id,price,pid FROM order_items WHERE id = $1", [piid], (err: Error, result: ResultSet) => {
+    db.query("SELECT id,price,pid FROM order_items WHERE id = $1 AND deleted = FALSE", [piid], (err: Error, result: ResultSet) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -1325,7 +1325,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
 
 function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid", [], (e: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE", [], (e: Error, result: ResultSet) => {
       if (e) {
         reject(e);
       } else {
@@ -1411,7 +1411,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
 
 function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE", [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1540,7 +1540,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
 
 function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE", [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1663,7 +1663,7 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
 
 function refresh_underwrite(db: PGClient, cache: RedisClient, domain: string) {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u LEFT JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u INNER JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
