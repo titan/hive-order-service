@@ -60,7 +60,6 @@ function formatNum(Source: string, Length: number): string {
 
 // 获取所有订单
 svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number) => {
-  // http://redis.io/commands/smembers
   log.info("getallorder");
   if (!verify([numberVerifier("start", start), numberVerifier("limit", limit)], (errors: string[]) => {
     rep({
@@ -72,7 +71,7 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
   }
   ctx.cache.zrevrange(order_key, start, limit, function (err, result) {
     if (err) {
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err.message });
     } else {
       let multi = ctx.cache.multi();
       for (let id of result) {
@@ -80,9 +79,9 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
       }
       multi.exec((err, result2) => {
         if (err) {
-          rep({ code: 500, state: err });
+          rep({ code: 500, msg: err.message });
         } else {
-          rep(result2.map(e => JSON.parse(e)));
+          rep({ code: 200, data: result2.map(e => JSON.parse(e)) });
         }
       });
     }
@@ -102,7 +101,7 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
   }
   ctx.cache.hget(order_entities, order_id, function (err, result) {
     if (err) {
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err });
     } else {
       rep({ code: 200, data: JSON.parse(result) });
     }
@@ -125,7 +124,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
     if (err) {
       log.info("get redis error in getorders");
       log.info(err);
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err.message });
     }
     else if (result === null) {
       rep({ code: 404, msg: "not found" });
@@ -159,24 +158,26 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
   }
   ctx.cache.hget(order_vid + vid, qid, function (err, result) {
     log.info("===========" + result);
-    if (err || result == null) {
-      rep({ code: 500, state: "not found" });
-    } else {
+    if (err) {
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
       ctx.cache.hget(order_entities, result, function (err1, result1) {
-        if (err || result1 == null) {
-          log.info(err + "get order_entities err in getOrderState");
-          rep({ code: 500 });
-        } else {
+        if (err1) {
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
           rep({ code: 200, data: JSON.parse(result1) });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
         }
       });
+    } else {
+      rep({ code: 404, msg: "Order not found" });
     }
   });
 });
 
 // 获取驾驶人信息
 svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
-  // http://redis.io/commands/smembers
   log.info("getorders");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
     rep({
@@ -189,12 +190,10 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
   ctx.cache.hget(driver_entities, vid, function (err, result) {
     if (err) {
       log.info("get redis error in getDriverOrders");
-      log.info(err);
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err.message });
     } else if (result == null) {
       rep({ code: 404, msg: "not found" });
     } else {
-      log.info("replies==========" + result);
       rep({ code: 200, data: JSON.parse(result) });
     }
   });
@@ -211,14 +210,14 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
     return;
   }
   let uid = ctx.uid;
-  let callback = uuid.v1();
   let order_id = uuid.v1();
+  let callback = order_id;
   let domain = ctx.domain;
   let args = [domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback];
   log.info("placeplanorder %j", args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
-  rep({ code: 200, order_id: order_id });
-  // wait_for_response(ctx.cache, callback, rep);
+  rep({ code: 200, data: order_id });
+  wait_for_response(ctx.cache, callback, rep);
 });
 // 下司机单
 svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: number, payment: number) => {
@@ -231,16 +230,17 @@ svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction
   })) {
     return;
   }
+  let callback = uuid.v1();
   let uid = ctx.uid;
   let domain = ctx.domain;
-  let args = [domain, uid, vid, dids, summary, payment];
+  let args = [domain, uid, vid, dids, summary, payment, callback];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnDriverOrder", args: args }));
-  rep({ code: 200 });
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 // 更新订单状态
-svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: any, state_code: string, state: string) => {
-  if (!verify([uuidVerifier("uid", uid)], (errors: string[]) => {
+svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, uid: string, order_no: string, state_code: number, state: string) => {
+  if (!verify([uuidVerifier("uid", uid), stringVerifier("order_no", order_no), numberVerifier("state_code", state_code), stringVerifier("state", state)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -249,33 +249,35 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
     return;
   }
   ctx.cache.hget(orderNo_id, order_no, function (err, result) {
-    if (err || result == null) {
-      log.info("get redis error in getDriverOrders");
-      log.info(err);
-      rep({ code: 404, state: "not found" });
-    } else {
+    if (err) {
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
       let order_id = result;
       ctx.cache.hget(orderid_vid, order_id, function (err1, result1) {
-        if (err || result1 == null) {
+        if (err1) {
           log.info("get redis error in get orderid_vid" + err1);
-          rep({ code: 404, state: "not found the vid" });
-        } else {
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
+          let callback = uuid.v1();
           let vid = result1;
           let domain = ctx.domain;
-          log.info("==========" + result);
-          let args = [domain, uid, vid, order_id, state_code, state];
+          let args = [domain, uid, vid, order_id, state_code, state, callback];
           log.info("updateOrderState", args);
           ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderState", args: args }));
-          rep({ code: 200 });
+          wait_for_response(ctx.cache, callback, rep);
+        } else {
+          rep({ code: 404, msg: "Order not found" });
         }
       });
+    } else {
+      rep({ code: 404, msg: "Order no not found" });
     }
   });
 });
 
 // 更新订单编号
-svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction, order_no: string) => {
-  log.info(" updatePlanOrderNo", ctx);
+svc.call("updateOrderNo", permissions, (ctx: Context, rep: ResponseFunction, order_no: string) => {
+  log.info(" updateOrderNo", ctx);
   if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
     rep({
       code: 400,
@@ -285,17 +287,20 @@ svc.call("updatePlanOrderNo", permissions, (ctx: Context, rep: ResponseFunction,
     return;
   }
   ctx.cache.incr("order-no", (err, strNo) => {
-    if (err || !strNo) {
+    if (err) {
       log.info(err + "cache incr err");
-      rep({ code: 500, msg: "未知错误" });
-    } else {
+      rep({ code: 500, msg: err.message });
+    } else if (strNo) {
       let new_no = order_no.substring(0, 14);
       let strno = String(strNo);
       let no: string = formatNum(strno, 7);
       let new_order_no = new_no + no;
-      let args = [order_no, new_order_no];
-      ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-      rep({ code: 200, order_no: new_order_no });
+      const callback = uuid.v1();
+      let args = [order_no, new_order_no, callback];
+      ctx.msgqueue.send(msgpack.encode({ cmd: "updateOrderNo", args: args }));
+      wait_for_response(ctx.cache, callback, rep);
+    } else {
+      rep({ code: 404, msg: "Order no not found" });
     }
   });
 });
@@ -317,17 +322,20 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
     if (err) {
       log.info("get redis error in getPlanOrderByVehicle");
       log.info(err);
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err.message });
     } else if (result === null) {
       log.info("not found planorder for this vid");
-      rep({ code: 404, msg: "not found" });
+      rep({ code: 404, msg: "Order not found" });
     } else {
-      ctx.cache.hget(order_entities, result, function (err, result1) {
-        if (err) {
-          log.info("get Redis in get order_entities ERROR" + err);
-        } else {
+      ctx.cache.hget(order_entities, result, function (err1, result1) {
+        if (err1) {
+          log.info("get Redis in get order_entities ERROR" + err1);
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
           log.info("replies==========" + result1);
-          rep({ code: 200, order: JSON.parse(result1) });
+          rep({ code: 200, data: JSON.parse(result1) });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
         }
       });
     }
@@ -349,13 +357,13 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
     if (err) {
       log.info("get redis error in getPlanOrderByVehicle");
       log.info(err);
-      rep({ code: 500, state: err });
+      rep({ code: 500, msg: err.message });
     } else if (result === null) {
       log.info("not found planorder for this vid");
       rep({ code: 404, msg: "not found" });
     } else {
       log.info("replies==========" + result);
-      rep({ code: 200, order: result.map(e => JSON.parse(e)) });
+      rep({ code: 200, data: result.map(e => JSON.parse(e)) });
       // rep(JSON.parse(result));
     }
   });
@@ -364,7 +372,7 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
 
 // 下第三方订单
 svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid: string, qid: string, items: any, summary: number, payment: number) => {
-  log.info("placeAnSaleOrder %j", ctx);
+  log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d", vid, pid, qid, summary, payment);
   if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
     rep({
       code: 400,
@@ -375,10 +383,11 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   }
   let uid = ctx.uid;
   let order_id = uuid.v1();
+  let callback = order_id;
   let domain = ctx.domain;
-  let args = [uid, domain, order_id, vid, pid, qid, items, summary, payment];
+  let args = [uid, domain, order_id, vid, pid, qid, items, summary, payment, callback];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
-  rep({ code: 200, order_id: order_id });
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 // 修改第三方订单
@@ -393,9 +402,10 @@ svc.call("updateSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, o
     return;
   }
   let domain = ctx.domain;
-  let args = [domain, order_id, items, summary, payment];
-  ctx.msgqueue.send(msgpack.encode({ cmd: "updateAnSaleOrder", args: args }));
-  rep({ code: 200 });
+  const callback = uuid.v1();
+  let args = [domain, order_id, items, summary, payment, callback];
+  ctx.msgqueue.send(msgpack.encode({ cmd: "updateSaleOrder", args: args }));
+  wait_for_response(ctx.cache, callback, rep);
 });
 
 // 根据vid获取第三方保险
@@ -411,18 +421,22 @@ svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid:
   }
   ctx.cache.hget("vehicle-order", vid, function (err, result) {
     log.info("===========" + result);
-    if (err || result == null) {
+    if (err) {
       log.info(err);
-      rep({ code: 500, state: "not found" });
-    } else {
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
       ctx.cache.hget(order_entities, result, function (err1, result1) {
-        if (err || result1 == null) {
-          log.info(err + "get order_entities err in getOrderState");
-          rep({ code: 500, state: "not found" });
-        } else {
+        if (err1 || result1 == null) {
+          log.info(err1 + "get order_entities err in getOrderState");
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
           rep({ code: 200, data: JSON.parse(result1) });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
         }
       });
+    } else {
+      rep({ code: 404, msg: "Order not found" });
     }
   });
 });
@@ -756,6 +770,15 @@ svc.call("getUnderwriteByUWId", permissions, (ctx: Context, rep: ResponseFunctio
   });
 });
 
-console.log("Start service at " + config.svraddr);
+svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
+  log.info("refresh");
+  ctx.msgqueue.send(msgpack.encode({ cmd: "refresh", args: [ctx.domain] }));
+  rep({
+    code: 200,
+    msg: "Okay"
+  });
+});
+
+log.info("Start service at " + config.svraddr);
 
 svc.run();

@@ -190,12 +190,12 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
       acc.push(val);
       async_serial_driver(ps, acc, cb);
     })
-      .catch(e => {
-        async_serial_driver(ps, acc, cb);
-      });
+    .catch(e => {
+      async_serial_driver(ps, acc, cb);
+    });
   }
 }
-processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, order_id: string, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, callback: string) => {
+processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, order_id: string, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, cbflag: string) => {
   log.info("placeOrder");
   let event_id = uuid.v1();
   let state_code = 1;
@@ -204,8 +204,17 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
   let plan_data1 = "新增plan计划";
   let plan_data = JSON.stringify(plan_data1);
   cache.incr("order-no", (err, strNo) => {
-    if (err || !strNo) {
+    if (err) {
       log.info(err + "cache incr err");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
+    } else if (!strNo) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 404,
+        msg: "No new order no"
+      }));
     } else {
       let strno = String(strNo);
       let no: string = formatNum(strno, 7);
@@ -228,19 +237,31 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
       db.query("BEGIN", (err: Error) => {
         if (err) {
           log.error(err, "query error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
         } else {
           db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
             if (err) {
-              db.query("ROLLBACK", [], (err: Error) => {
+              db.query("ROLLBACK", [], (err1: Error) => {
                 log.error(err, "insert into orders error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               });
             } else {
               db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, plan_data], (err: Error, result: ResultSet) => {
                 if (err) {
-                  db.query("ROLLBACK", [], (err: Error) => {
+                  db.query("ROLLBACK", [], (err1: Error) => {
                     log.error(err, "insert into order_events error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   });
                 } else {
@@ -258,10 +279,10 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                     payment: payment,
                     v_value: v_value,
                     expect_at: expect_at,
-                    callback: callback
+                    cbflag: cbflag
                   };
                   insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
-                    let p = rpc<Object>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                    let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid);
                     let p2 = rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid);
                     let plan_promises: Promise<Object>[] = [];
                     for (let pid of pids) {
@@ -271,11 +292,21 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                     p.then((v) => {
                       if (err) {
                         log.info("call vehicle error");
+                        cache.setex(cbflag, 30, JSON.stringify({
+                          code: 500,
+                          msg: err.message
+                        }));
+                        done();
                       } else {
                         let vehicle = v["data"];
                         p2.then((q) => {
                           if (err) {
                             log.info("call quotation error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err.message
+                            }));
+                            done();
                           } else {
                             let quotation = q["data"];
                             async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
@@ -326,13 +357,25 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                               multi.exec((err3, replies) => {
                                 if (err3) {
                                   log.error(err3, "query redis error");
+                                  cache.setex(cbflag, 30, JSON.stringify({
+                                    code: 500,
+                                    msg: err3.message
+                                  }));
                                 } else {
                                   log.info("placeAnOrder: done");
+                                  cache.setex(cbflag, 30, JSON.stringify({
+                                    code: 200,
+                                    data: order_id
+                                  }));
                                 }
                                 done(); // close db and cache connection
                               });
                             }, (e: Error) => {
                               log.error(e);
+                              cache.setex(cbflag, 30, JSON.stringify({
+                                code: 500,
+                                msg: e.message
+                              }));
                               done(); // close db and cache connection
                             });
                           }
@@ -351,17 +394,37 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
 });
 
 
-processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string) => {
-  log.info("updatePlanOrderNo" + order_no);
+processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string, cbflag) => {
+  log.info("updateOrderNo" + order_no);
   cache.hget("orderNo-id", order_no, function (err, result) {
-    if (err || result == null) {
+    if (err) {
       log.info(err + "get order_id err or order_id not found");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
+      done();
+    } else if (result === null) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 404,
+        msg: "Order id not found"
+      }));
       done();
     } else {
       let order_id = result;
       cache.hget("order-entities", order_id, function (err1, result1) {
-        if (err1 || result1 == null) {
+        if (err1) {
           log.info(err1 + "get order_entities err or order_entities not found");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err1.message
+          }));
+          done();
+        } else if (result1 == null) {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 404,
+            msg: "Order not found"
+          }));
           done();
         } else {
           let order_entities = JSON.parse(result1);
@@ -373,8 +436,16 @@ processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: Don
           multi.exec((err2, result2) => {
             if (err2) {
               log.error(err2, "query redis error");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 500,
+                msg: err2.message
+              }));
             } else {
-              log.info("updatePlanOrderNo done");
+              log.info("updateOrderNo done");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 200,
+                data: new_order_no
+              }));
             }
             done();
           });
@@ -384,7 +455,7 @@ processor.call("updatePlanOrderNo", (db: PGClient, cache: RedisClient, done: Don
   });
 });
 // let args = [domain, uid, vid, dids, summary, payment];
-processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number) => {
+processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, dids: any, summary: number, payment: number, cbflag: string) => {
   log.info("placeAnOrder");
   let order_id = uuid.v1();
   let item_id = uuid.v1();
@@ -400,12 +471,20 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       // vid, dids, summary, payment
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error, result: ResultSet) => {
         if (err) {
           log.error(err, " insert orders  error in placeAnDriverOrder");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
           return;
         }
@@ -413,6 +492,10 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: ResultSet) => {
             if (err) {
               log.error(err, "insert info order_events error in placeAnDriverOrder");
+              cache.setex(cbflag, 30, JSON.stringify({
+                code: 500,
+                msg: err.message
+              }));
               done();
               return;
             } else {
@@ -425,15 +508,20 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                 payment: payment
               };
               insert_driver_order_recursive(db, done, order_id, args2, dids.map(did => did), {}, () => {
-                let p = rpc(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                let p = rpc(domain, servermap["vehicle"], null, "getVehicle", vid);
                 let driver_promises = [];
                 for (let did of dids) {
-                  let p1 = rpc(domain, servermap["vehicle"], null, "getDriverInfos", vid, did);
+                  let p1 = rpc(domain, servermap["vehicle"], null, "getDrivers", vid, did);
                   driver_promises.push(p1);
                 }
                 p.then((v) => {
                   if (err) {
                     log.info("call vehicle error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
+                    done();
                   } else {
                     let vehicle = v["data"];
                     async_serial_driver(driver_promises, [], drivers => {
@@ -442,36 +530,36 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                       cache.hget("vid-doid", vid, function (err, result1) {
                         if (err) {
                           log.info("get vid-doid error");
-                        } else if (result1 == null) {
-                          cache.hset("vid-doid", vid, order_id, function (err, result2) {
-                            if (err) {
-                              log.info("hset vid-doid in placeAnDriverOrder");
-                            } else {
-                              log.info("success set vid-doid");
-                            }
-                          });
-                        } else {
-                          vid_doid = result1;
+                        } else if (result1) {
+                          vid_doid = JSON.parse(result1);
                         }
-                      });
-                      vid_doid.push(order_id);
-                      let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
-                      let order_drivers = { drivers: drivers, vehicle: vehicle };
-                      let multi = cache.multi();
-                      multi.zadd("driver_orders", created_at, order_id);
-                      multi.zadd("orders", created_at, order_id);
-                      multi.zadd("orders-" + uid, created_at, order_id);
-                      multi.hset("vid-doid", vid, vid_doid);
-                      multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
-                      multi.hset("order-entities", order_id, JSON.stringify(order));
-                      multi.exec((err3, replies) => {
-                        if (err3) {
-                          log.error(err3, "query redis error");
-                          done();
-                        } else {
-                          log.info("placeAnDriverOrder: done");
-                          done(); // close db and cache connection
-                        }
+                        vid_doid.push(order_id);
+                        let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };
+                        let order_drivers = { drivers: drivers, vehicle: vehicle };
+                        let multi = cache.multi();
+                        multi.zadd("driver_orders", created_at, order_id);
+                        multi.zadd("orders", created_at, order_id);
+                        multi.zadd("orders-" + uid, created_at, order_id);
+                        multi.hset("vid-doid", vid, vid_doid);
+                        multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
+                        multi.hset("order-entities", order_id, JSON.stringify(order));
+                        multi.exec((err3, replies) => {
+                          if (err3) {
+                            log.error(err3, "query redis error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err3.message
+                            }));
+                            done();
+                          } else {
+                            log.info("placeAnDriverOrder: done");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 200,
+                              data: order_id
+                            }));
+                            done(); // close db and cache connection
+                          }
+                        });
                       });
                     });
                   }
@@ -484,76 +572,103 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
     }
   });
 });
-processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, vid: string, order_id: string, state_code: string, state: string) => {
+
+function createGroup(domain: string, order: Object, uid: string) {
+  return new Promise<any>((resolve, reject) => {
+    let vehicle = order["vehicle"];
+    let name: string = vehicle["owner"].name;
+    let identity_no: string = vehicle["owner"].identity_no;
+    let g_name: string;
+    let apportion: number = 0.20;
+    if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
+      g_name = name + "先生";
+    } else {
+      g_name = name + "女士";
+    }
+    let p = rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
+    p.then(r => {
+      resolve(r);
+    }).catch((e: Error) => {
+      reject(e);
+    });
+  });
+}
+
+function createAccount(domain: string, order: Object, uid: string) {
+  return new Promise<any>((resolve, reject) => {
+    const vid = order["vehicle"]["id"];
+    const balance = order["summary"];
+    const balance0 = balance * 0.2;
+    const balance1 = balance * 0.8;
+    let p = rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1);
+    p.then(r => {
+      resolve(r);
+    }).catch((e: Error) => {
+      reject(e);
+    });
+  });
+}
+
+processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
   log.info("updateOrderState");
-  let code = parseInt(state_code, 10);
+  let code = state_code;
   let type1 = 1;
   let balance: number = null;
   let start_at = null;
-  db.query("UPDATE orders SET state_code = $1,state = $2 WHERE id = $3", [code, state, order_id], (err: Error, result: ResultSet) => {
+  db.query("UPDATE orders SET state_code = $1, state = $2 WHERE id = $3", [state_code, state, order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
-      log.info("err,updateOrderState error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
-      let p = rpc(domain, servermap["vehicle"], null, "getVehicleInfo", vid);
-      p.then((v) => {
+      cache.hget("order-entities", order_id, function (err, reply) {
         if (err) {
-          log.info("call vehicle error");
+          log.info("err,get redis error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
+          done();
+        } else if (!reply) {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 404,
+            msg: "Order not found!"
+          }));
+          done();
         } else {
-          let vehicle = v["data"];
-          let name: string = vehicle["owner"].name;
-          let identity_no: string = vehicle["owner"].identity_no;
-          let g_name: any;
-          let apportion: number = 0.20;
-          if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
-            g_name = name + "先生";
-          } else {
-            g_name = name + "女士";
+          let order = JSON.parse(reply);
+          let ps = [];
+          if (state_code === 3) {
+            ps.push(createGroup(domain, order, uid));
+          } else if (state_code === 2) {
+            ps.push(createAccount(domain, order, uid));
           }
-          let p1 = rpc(domain, servermap["group"], null, "createGroup", g_name, vid, apportion, uid);
-          p1.then((result2) => {
-            if (err) {
-              log.info("call group error");
-            } else {
-              log.info("call group success for createGroup");
-            }
-          });
-          cache.hget("order-entities", order_id, function (err, replise) {
-            if (err) {
-              log.info("err,get redis error");
-              done();
-            } else {
-              let order_entities = JSON.parse(replise);
-              balance = order_entities["summary"];
-              let balance0 = balance * 0.2;
-              let balance1 = balance * 0.8;
-              let p2 = rpc(domain, servermap["wallet"], null, "createAccount", uid, type1, vid, balance0, balance1);
-              p2.then((v) => {
-                if (err) {
-                  log.info("call vehicle error");
-                } else {
-                  order_entities["state_code"] = state_code;
-                  order_entities["state"] = state;
-                  if (start_at !== null) {
-                    order_entities["start_at"] = start_at;
-                  } else {
-                    let multi = cache.multi();
-                    multi.hset("vid-poid", vid, order_id);
-                    multi.hset("order-entities", order_id, JSON.stringify(order_entities));
-                    multi.exec((err, result1) => {
-                      if (err) {
-                        log.info("err:hset order_entities error");
-                        done();
-                      } else {
-                        log.info("db end in updateOrderState");
-                        done();
-                      }
-                    });
-                  }
-                }
-              });
-            }
+
+          async_serial_ignore(ps, [], (_) => {
+            order["state_code"] = state_code;
+            order["state"] = state;
+            let multi = cache.multi();
+            multi.hset("order-entities", order_id, JSON.stringify(order));
+            multi.setex(cbflag, 30, JSON.stringify({
+              code: 200,
+              data: "Success"
+            }));
+            multi.exec((err, result1) => {
+              if (err) {
+                log.info("err:hset order_entities error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
+                done();
+              } else {
+                log.info("db end in updateOrderState");
+                done();
+              }
+            });
           });
         }
       });
@@ -562,7 +677,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
 });
 
 // let args = {uid,vid,items,summary,payment};{piid: price}
-processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string) => {
+processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string, cbflag: string) => {
   log.info("placeAnOrder");
   let item_id = uuid.v1();
   let event_id = uuid.v1();
@@ -578,85 +693,113 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1, $2, $3, $4, $5, $6, $7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
         if (err) {
-          db.query("ROLLBACK", [], (err: Error) => {
+          db.query("ROLLBACK", [], (err1: Error) => {
             log.error(err, "insert into orders error in placeAnSaleOrder");
+            cache.setex(cbflag, 30, JSON.stringify({
+              code: 500,
+              msg: err.message
+            }));
             done();
           });
         } else {
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
             if (err) {
-              db.query("ROLLBACK", [], (err: Error) => {
+              db.query("ROLLBACK", [], (err1: Error) => {
                 log.error(err, "insert into order_events error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               });
             } else {
               db.query("INSERT INTO sale_order_ext(id, oid,pid,qid) VALUES($1, $2,$3,$4)", [event_id, order_id, pid, qid], (err: Error, result: ResultSet) => {
                 if (err) {
-                  db.query("ROLLBACK", [], (err: Error) => {
+                  db.query("ROLLBACK", [], (err1: Error) => {
                     log.error(err, "insert into order_events error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   });
                 } else {
                   insert_sale_order_items_recursive(db, done, order_id, pid, items, piids.map(piid => piid), {}, () => {
-                    let p = rpc(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", vid);
+                    let p = rpc(domain, servermap["vehicle"], null, "getVehicle", vid);
                     let p1 = rpc(domain, servermap["plan"], null, "getPlan", pid);
-                    p.then((v) => {
-                      if (err) {
-                        log.info("call vehicle error");
+                    async_serial<Object>([p, p1], [], (obj: Object[]) => {
+                      if (obj[0]["code"] !== 200 || obj[1]["code"] !== 200) {
+                        cache.setex(cbflag, 30, JSON.stringify({
+                          code: 404,
+                          msg: "Vehicle or plan not found"
+                        }));
+                        done();
                       } else {
-                        let vehicle = v["data"];
-                        p1.then((p) => {
-                          if (err) {
-                            log.info("call quotation error");
+                        let vehicle = obj[0]["data"];
+                        let plan = obj[1]["data"];
+                        let plan_items = plan["items"];
+                        let piids = [];
+                        for (let item of plan_items) {
+                          piids.push(item.id);
+                        }
+                        let prices = [];
+                        for (let item in items) {
+                          prices.push(items[item]);
+                        }
+                        let items1 = [];
+                        log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
+                        let len = Math.min(piids.length, prices.length, plan_items.length);
+                        log.info("=====length" + len);
+                        for (let i = 0; i < len; i++) {
+                          let item_id = piids.shift();
+                          let price = prices.shift();
+                          let plan_item = plan_items.shift();
+                          items.push({ item_id, price, plan_item });
+                        }
+                        let created_at = new Date().getTime();
+                        let created_at1 = getLocalTime(created_at / 1000);
+                        let start_at = null;
+                        let stop_at = null;
+                        let order = {
+                          summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at, stop_at: stop_at
+                        };
+                        let multi = cache.multi();
+                        multi.zadd("sale-orders", created_at, order_id);
+                        multi.zadd("orders", created_at, order_id);
+                        multi.zadd("orders-" + uid, created_at, order_id);
+                        multi.hset("vehicle-order", vid, order_id);
+                        multi.hset("orderid-vid", order_id, vid);
+                        multi.hset("order-entities", order_id, JSON.stringify(order));
+                        multi.exec((err3, replies) => {
+                          if (err3) {
+                            log.error(err3, "query error");
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 500,
+                              msg: err3.message
+                            }));
+                          } else {
+                            cache.setex(cbflag, 30, JSON.stringify({
+                              code: 200,
+                              data: order_id
+                            }));
                           }
-                          else {
-                            let plan = p["data"];
-                            let plan_items = plan["items"];
-                            let piids = [];
-                            for (let item of plan_items) {
-                              piids.push(item.id);
-                            }
-                            let prices = [];
-                            for (let item in items) {
-                              prices.push(items[item]);
-                            }
-                            let items1 = [];
-                            log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
-                            let len = Math.min(piids.length, prices.length, plan_items.length);
-                            log.info("=====length" + len);
-                            for (let i = 0; i < len; i++) {
-                              let item_id = piids.shift();
-                              let price = prices.shift();
-                              let plan_item = plan_items.shift();
-                              items.push({ item_id, price, plan_item });
-                            }
-                            let created_at = new Date().getTime();
-                            let created_at1 = getLocalTime(created_at / 1000);
-                            let start_at = null;
-                            let stop_at = null;
-                            let order = {
-                              summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at, stop_at: stop_at
-                            };
-                            let multi = cache.multi();
-                            multi.zadd("sale-orders", created_at, order_id);
-                            multi.zadd("orders", created_at, order_id);
-                            multi.zadd("orders-" + uid, created_at, order_id);
-                            multi.hset("vehicle-order", vid, order_id);
-                            multi.hset("orderid-vid", order_id, vid);
-                            multi.hset("order-entities", order_id, JSON.stringify(order));
-                            multi.exec((err3, replies) => {
-                              if (err3) {
-                                log.error(err3, "query error");
-                              }
-                              done(); // close db and cache connection
-                            });
-                          }
+                          done(); // close db and cache connection
                         });
                       }
+                    }, (e: Error) => {
+                      cache.setex(cbflag, 30, JSON.stringify({
+                        code: 500,
+                        msg: e.message
+                      }));
+                      done();
                     });
                   });
                 }
@@ -669,8 +812,8 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
   });
 });
 
-processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number) => {
-  log.info("updateAnSaleOrder");
+processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number, cbflag: string) => {
+  log.info("UpdateSaleOrder");
   // orderNo-id
   let update_at = new Date;
   let piids: Object[] = [];
@@ -682,12 +825,20 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
   db.query("BEGIN", (err: Error) => {
     if (err) {
       log.error(err, "query error");
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }));
       done();
     } else {
       db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
         if (err) {
           log.info(err);
           log.info("err,updateOrderState error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: err.message
+          }));
           done();
         }
         else {
@@ -695,6 +846,10 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
             cache.hget("order-entities", order_id, function (err, result) {
               if (err) {
                 log.info("err,get redis error");
+                cache.setex(cbflag, 30, JSON.stringify({
+                  code: 500,
+                  msg: err.message
+                }));
                 done();
               } else {
                 log.info("================" + result);
@@ -711,9 +866,17 @@ processor.call("updateAnSaleOrder", (db: PGClient, cache: RedisClient, done: Don
                 multi.exec((err, result1) => {
                   if (err) {
                     log.info("err:hset order_entities error");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 500,
+                      msg: err.message
+                    }));
                     done();
                   } else {
                     log.info("db end in updateOrderState");
+                    cache.setex(cbflag, 30, JSON.stringify({
+                      code: 200,
+                      data: order_id
+                    }));
                     done();
                   }
                 });
@@ -858,7 +1021,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
   async_serial<void>(promises, [], () => {
     cache.hget("underwrite-entities", uwid, function (err, result) {
       if (result) {
-        let op = rpc<Object>(domain, servermap["operator"], null, "getOperatorInfo", opid);
+        let op = rpc<Object>(domain, servermap["operator"], null, "getOperator", opid);
         op.then(o => {
           let operator = o["data"];
           let underwrite = JSON.parse(result);
@@ -920,73 +1083,106 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       }
     });
   })
-    .then(() => {
-      return new Promise<Object>((resolve, reject) => {
-        log.info("redis " + uwid);
-        cache.hget("underwrite-entities", uwid, function (err, result) {
-          if (result) {
-            resolve(JSON.parse(result));
-          } else if (err) {
+  .then(() => {
+    return new Promise<Object>((resolve, reject) => {
+      log.info("redis " + uwid);
+      cache.hget("underwrite-entities", uwid, function (err, result) {
+        if (result) {
+          resolve(JSON.parse(result));
+        } else if (err) {
+          log.info(err);
+          reject(err);
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  })
+  .then((underwrite: Object) => {
+    return new Promise<Object>((resolve, reject) => {
+      if (underwrite != null) {
+        underwrite["underwrite_result"] = underwrite_result;
+        underwrite["result_update_time"] = update_time;
+        underwrite["updated_at"] = update_time;
+        let multi = cache.multi();
+        multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+        multi.exec((err: Error, _) => {
+          if (err) {
             log.info(err);
             reject(err);
           } else {
-            resolve(null);
+            resolve(underwrite);
           }
         });
-      });
-    })
-    .then((underwrite: Object) => {
-      return new Promise<Object>((resolve, reject) => {
-        if (underwrite != null) {
-          underwrite["underwrite_result"] = underwrite_result;
-          underwrite["result_update_time"] = update_time;
-          underwrite["updated_at"] = update_time;
-          let multi = cache.multi();
-          multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
-          multi.exec((err: Error, _) => {
+      } else {
+        reject("underwrite is null");
+      }
+    });
+  })
+  .then((underwrite: Object) => {
+    return new Promise<Object>((resolve, reject) => {
+      let orderid = underwrite["order_id"];
+      console.log("orderid------------" + orderid);
+      cache.hget("order-entities", orderid, function (err, result) {
+        if (result) {
+          let order = JSON.parse(result);
+          let expect_at = new Date(order["expect_at"]);
+          log.info(expect_at + "expect_at" + order["expect_at"]);
+          let start_at = expect_at;
+          if (expect_at.getTime() <= update_time.getTime()) {
+            let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
+            start_at = new Date(date);
+          }
+          let stop_at = new Date(start_at.getTime() + 31536000000);
+          order["start_at"] = start_at;
+          order["stop_at"] = stop_at;
+          order["state_code"] = 3;
+          order["state"] = "已核保";
+          db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
             if (err) {
               log.info(err);
               reject(err);
             } else {
-              resolve(underwrite);
+              resolve(order);
             }
           });
         } else {
-          reject("underwrite is null");
+          reject(err);
         }
       });
-    })
-    .then((underwrite: Object) => {
-      return new Promise<Object>((resolve, reject) => {
-        let orderid = underwrite["order_id"];
-        console.log("orderid------------" + orderid);
-        cache.hget("order-entities", orderid, function (err, result) {
-          if (result) {
-            let order = JSON.parse(result);
-            let expect_at = new Date(order["expect_at"]);
-            log.info(expect_at + "expect_at" + order["expect_at"]);
-            let start_at = expect_at;
-            if (expect_at.getTime() <= update_time.getTime()) {
-              let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
-              start_at = new Date(date);
-            }
-            let stop_at = new Date(start_at.getTime() + 31536000000);
-            order["start_at"] = start_at;
-            order["stop_at"] = stop_at;
-            order["state_code"] = 3;
-            order["state"] = "已核保";
-            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
-              if (err) {
-                log.info(err);
-                reject(err);
-              } else {
-                resolve(order);
-              }
-            });
-          } else {
-            reject(err);
-          }
-        });
+// <<<<<<< HEAD
+    // })
+    // .then((underwrite: Object) => {
+    //   return new Promise<Object>((resolve, reject) => {
+    //     let orderid = underwrite["order_id"];
+    //     console.log("orderid------------" + orderid);
+    //     cache.hget("order-entities", orderid, function (err, result) {
+    //       if (result) {
+    //         let order = JSON.parse(result);
+    //         let expect_at = new Date(order["expect_at"]);
+    //         log.info(expect_at + "expect_at" + order["expect_at"]);
+    //         let start_at = expect_at;
+    //         if (expect_at.getTime() <= update_time.getTime()) {
+    //           let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
+    //           start_at = new Date(date);
+    //         }
+    //         let stop_at = new Date(start_at.getTime() + 31536000000);
+    //         order["start_at"] = start_at;
+    //         order["stop_at"] = stop_at;
+    //         order["state_code"] = 3;
+    //         order["state"] = "已核保";
+    //         db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
+    //           if (err) {
+    //             log.info(err);
+    //             reject(err);
+    //           } else {
+    //             resolve(order);
+    //           }
+    //         });
+    //       } else {
+    //         reject(err);
+    //       }
+    //     });
       });
     })
     .then((order: Object) => {
@@ -1031,17 +1227,55 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             msg: "update order cache error"
           }));
           done();
-        }
-      });
-    })
-    .catch(error => {
-      cache.setex(callback, 30, JSON.stringify({
-        code: 500,
-        msg: error.message
-      }));
-      log.info("err" + error);
-      done();
+// =======
+//     });
+//   })
+//   .then((order: Object) => {
+//     let orderid = order["order_id"];
+//     let multi = cache.multi();
+//     multi.hset("order-entities", orderid, JSON.stringify(order));
+//     multi.setex(callback, 30, JSON.stringify({
+//       code: 200,
+//       uwid: uwid
+//     }));
+//     multi.exec((err2, result2) => {
+//       if (result2) {
+//         if (underwrite_result.trim() === "通过") {
+//           log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
+//           let openid = rpc<Object>(domain, servermap["profile"], null, "getUserOpenId", order["vehicle"]["vehicle"]["user_id"]);
+//           log.info("openid------------" + openid);
+//           let No = order["vehicle"]["vehicle"]["license_no"];
+//           let CarNo = order["vehicle"]["vehicle"]["familyName"];
+//           let name = order["vehicle"]["vehicle"]["owner"]["name"];
+
+//           http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
+//             log.info(`Notify response: ${res.statusCode}`);
+//             // consume response body
+//             res.resume();
+//           }).on("error", (e) => {
+//             log.error(`Notify error: ${e.message}`);
+//           });
+// >>>>>>> upstream/master
+      //   }
+      //   underwrite_trigger.send(msgpack.encode({ orderid, order }));
+      //   done();
+      // } else {
+      //   cache.setex(callback, 30, JSON.stringify({
+      //     code: 500,
+      //     msg: "update order cache error"
+      //   }));
+        done();
+      }
     });
+  })
+  .catch(error => {
+    cache.setex(callback, 30, JSON.stringify({
+      code: 500,
+      msg: error.message
+    }));
+    log.info("err" + error);
+    done();
+  });
 });
 
 // 修改实际验车地点
@@ -1093,62 +1327,59 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
       }
     });
   })
-    .then(() => {
-      return new Promise<Object>((resolve, reject) => {
-        log.info("redis " + uwid);
-        cache.hget("underwrite-entities", uwid, function (err, result) {
-          if (result) {
-            resolve(JSON.parse(result));
-          } else if (err) {
-            log.info(err);
-            reject(err);
-          } else {
-            resolve(null);
-          }
-        });
+  .then(() => {
+    return new Promise<Object>((resolve, reject) => {
+      log.info("redis " + uwid);
+      cache.hget("underwrite-entities", uwid, function (err, result) {
+        if (result) {
+          resolve(JSON.parse(result));
+        } else if (err) {
+          log.info(err);
+          reject(err);
+        } else {
+          resolve(null);
+        }
       });
-    })
-    .then((underwrite: Object) => {
-      if (underwrite != null) {
-        let uw = cb(underwrite);
-        let multi = cache.multi();
-        multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
-        multi.setex(cbflag, 30, JSON.stringify({
-          code: 200,
-          uwid: uwid
-        }));
-        multi.exec((err: Error, _) => {
-          if (err) {
-            log.error(err, "update underwrite cache error");
-            cache.setex(cbflag, 30, JSON.stringify({
-              code: 500,
-              msg: "update underwrite cache error"
-            }));
-          }
-          underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
-          done();
-        });
-      } else {
-        cache.setex(cbflag, 30, JSON.stringify({
-          code: 404,
-          msg: "Not found underwrite"
-        }));
-        log.info("Not found underwrite");
-        done();
-      }
-    })
-    .catch(error => {
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 500,
-        msg: error.message
-      }));
-      log.info("err" + error);
-      done();
     });
+  })
+  .then((underwrite: Object) => {
+    if (underwrite != null) {
+      let uw = cb(underwrite);
+      let multi = cache.multi();
+      multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
+      multi.setex(cbflag, 30, JSON.stringify({
+        code: 200,
+        uwid: uwid
+      }));
+      multi.exec((err: Error, _) => {
+        if (err) {
+          log.error(err, "update underwrite cache error");
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: "update underwrite cache error"
+          }));
+        }
+        underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+        done();
+      });
+    } else {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 404,
+        msg: "Not found underwrite"
+      }));
+      log.info("Not found underwrite");
+      done();
+    }
+  })
+  .catch(error => {
+    cache.setex(cbflag, 30, JSON.stringify({
+      code: 500,
+      msg: error.message
+    }));
+    log.info("err" + error);
+    done();
+  });
 }
-
-
-
 
 function select_order_item_recursive(db, done, piids, acc, cb) {
   if (piids.length === 0) {
@@ -1171,101 +1402,459 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
   }
 }
 
-processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain) => {
-  log.info(" order refresh");
-  db.query("SELECT id, vid, type, state_code, state, summary, payment, start_at FROM orders", [], (err: Error, result: ResultSet) => {
-    if (err) {
-      log.error(err, " SELECT order query error");
-      done();
-    } else {
-      let orders: Object[] = [];
-      for (let row of result.rows) {
-        let order = {
-          summary: row.summary,
-          state: row.state,
-          payment: row.payment,
-          v_value: null,
-          p_price: null,
-          stop_at: null,
-          service_ratio: null,
-          plan: [],
-          items: [],
-          expect_at: null,
-          state_code: row.state_code,
-          id: null,
-          order_id: row.order_id,
-          qid: null,
-          type: row.type,
-          vehicle: [],
-          created_at: row.start_at,
-          start_at: null
-        };
-        orders.push(order);
-        let p = rpc<Object[]>(domain, servermap["vehicle"], null, "getModelAndVehicleInfo", row.vid);
-        p.then((v) => {
-          if (err) {
-            log.info("call vehicle error");
+function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid", [], (e: Error, result: ResultSet) => {
+      if (e) {
+        reject(e);
+      } else {
+        const orders = {};
+        for (const row of result.rows) {
+          if (orders.hasOwnProperty(row.o_id)) {
+            orders[row.o_id]["dids"].push(row.e_pid);
           } else {
-            let vehicles = v["data"];
-            order["vehicle"] = vehicles;
-            cache.hget("order_entities", row.id, function (err, result) {
-              if (err) {
-                log.info("get order_entities err in refresh" + err);
-                done();
-              } else {
-                let order_entities = JSON.parse(result);
-                order["v_value"] = order_entities.v_value;
-                order["p_price"] = order_entities.p_price;
-                order["stop_at"] = order_entities.stop_at;
-                order["service_ratio"] = order_entities.service_ratio;
-                order["id"] = order_entities.id;
-              }
-            });
-            db.query("SELECT pid FROM plan_order_ext", [], (err: Error, result1: ResultSet) => {
-              let plan_promises: Promise<Object>[] = [];
-              for (let row of result1.rows) {
-                let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", row["pid"]);
-                plan_promises.push(p1);
-              }
-              async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
-                order["plan"] = plans2;
-              }, (e: Error) => {
-                log.error(e);
-                done(); // close db and cache connection
-              });
-            });
-          }
-        });
-        let piids = [];
-        let plan_items = [];
-        for (let order of orders) {
-          let plans = order["plan"];
-          for (let plan of plans) {
-            for (let item of plan["items"]) {
-              plan_items.push(item);
-              piids.push(item["id"]);
+            const order = {
+              id: row.o_id,
+              type: row.o_type,
+              state_code: row.o_state_code,
+              state: trim(row.o_state),
+              summary: row.o_summary,
+              payment: row.o_payment,
+              start_at: row.o_start_at,
+              stop_at: row.o_stop_at,
+              vid: row.o_vid,
+              vehicle: null,
+              drivers: [],
+              dids: [row.e_pid],
+              created_at: row.o_created_at,
+              updated_at: row.o_created_at
             }
+            orders[row.o_id] = order;
           }
         }
-        let items: Object[] = [];
-        select_order_item_recursive(db, done, piids.map(piid => piid), {}, (acc) => {
-          items = acc;
-          for (let item of items) {
-            for (let plan_item of plan_items) {
-              if (plan_item["id"] === item["piid"]) {
-                item["plan_item"] === plan_item;
+        const oids = Object.keys(orders);
+        let pvs = oids.map(oid => {
+          const order = orders[oid];
+          let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", order.vid);
+          return p;
+        });
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+          for (const vehicle of vehicles) {
+            for (const oid of oids) {
+              const order = orders[oid];
+              if (vehicle["id"] === order.vid) {
+                order.vehicle = vehicle;
               }
             }
           }
+          let pds = oids.reduce((acc, oid) => {
+            const order = orders[oid];
+            for (const did of order.dids) {
+              let p = rpc<Object>(domain, servermap["vehicle"], null, "getDrivers", order.vid, did);
+              acc.push(p);
+            }
+            return acc;
+          }, []);
+          async_serial_ignore<Object>(pds, [], (drvreps) => {
+            const drivers = drvreps.filter(d => d["code"] === 200).map(d => d["data"]);
+            for (const driver of drivers) {
+              for (const oid of oids) {
+                const order = orders[oid];
+                for (const drv of order.drivers) {
+                  if (drv === driver["id"]) {
+                    order.drivers.push(driver);
+                  }
+                }
+              }
+            }
+            const multi = cache.multi();
+            for (const oid of oids) {
+              const order = orders[oid];
+              multi.hset("order-entities", oid, JSON.stringify(order));
+              multi.zadd("driver-orders", order.updated_at.getTime(), oid);
+            }
+            multi.exec((err: Error, _: any[]) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve();
+              }
+            });
+          });
         });
-        order["items"] = items;
       }
-    }
+    });
+  });
+}
+
+function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const orders = {};
+        for (const row of result.rows) {
+          if (orders.hasOwnProperty(row.o_id)) {
+            orders[row.o_id]["items"].push({
+              id: row.oi_id,
+              pid: row.oi_pid,
+              piid: row.oi_piid,
+              plan_item: null,
+              price: row.oi_price
+            });
+          } else {
+            const order = {
+              id: row.o_id,
+              type: row.o_type,
+              state_code: row.o_state_code,
+              state: trim(row.o_state),
+              summary: row.o_summary,
+              payment: row.o_payment,
+              start_at: row.o_start_at,
+              stop_at: row.o_stop_at,
+              vid: row.o_vid,
+              vehicle: null,
+              pid: row.e_pid,
+              plan: null,
+              qid: row.e_qid,
+              quotation: null,
+              service_ratio: row.e_service_ratio,
+              expact_at: row.e_expact_at,
+              items: [{
+                id: row.oi_id,
+                pid: row.oi_pid,
+                piid: row.oi_piid,
+                plan_item: null,
+                price: row.oi_price
+              }],
+              created_at: row.o_created_at,
+              updated_at: row.o_updated_at
+            }
+            orders[row.o_id] = order;
+          }
+        }
+        const oids = Object.keys(orders);
+        const vidstmp = [];
+        const qidstmp = [];
+        const pidstmp = [];
+        const piidstmp = [];
+        for (const oid of oids) {
+          vidstmp.push(orders[oid]["vid"]);
+          qidstmp.push(orders[oid]["qid"]);
+          pidstmp.push(orders[oid]["pid"]);
+          for (const item of orders[oid]["items"]) {
+            piidstmp.push(item["plan_item"]);
+          }
+        }
+        const vids = [... new Set(vidstmp)];
+        const qids = [... new Set(qidstmp)];
+        const pids = [... new Set(pidstmp)];
+
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid));
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+          for (const vehicle of vehicles) {
+            for (const oid of oids) {
+              const order = orders[oid];
+              if (vehicle["id"] === order["vid"]) {
+                order["vehicle"] = vehicle; // a vehicle may belong to many orders
+              }
+            }
+          }
+          console.log("responses: %j", vreps);
+          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
+          async_serial_ignore<Object>(pqs, [], (qreps) => {
+            const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+            for (const quotation of quotations) {
+              for (const oid of oids) {
+                const order = orders[oid];
+                if (quotation["id"] === order["qid"]) {
+                  order["quotation"] = quotation;
+                  break; // a quotation only belongs to an order
+                }
+              }
+            }
+            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], null, "getPlan", pid));
+            async_serial_ignore<Object>(pps, [], (preps) => {
+              const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
+              for (const oid of oids) {
+                const order = orders[oid];
+                for (const plan of plans) {
+                  log.info("plan id: %s", plan["id"]);
+                  if (plan["id"] === order["pid"]) {
+                    order["plan"] = plan; // a plan may belong to many orders
+                  }
+                  for (const planitem of plan["items"]) {
+                    log.info("plan item id: %s", planitem["id"]);
+                    for (const orderitem of order["items"]) {
+                      if (planitem["id"] === orderitem["piid"]) {
+                        orderitem["plan_item"] = planitem;
+                      }
+                    }
+                  }
+                }
+              }
+              const multi = cache.multi();
+              for (const oid of oids) {
+                const order = orders[oid];
+                multi.hset("order-entities", oid, JSON.stringify(order));
+                multi.zadd("plan-orders", order.updated_at.getTime(), oid);
+              }
+              multi.exec((err: Error, _: any[]) => {
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            });
+          });
+        });
+      }
+    });
+  });
+}
+
+function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid LEFT JOIN plans AS p ON e.pid = p.id LEFT JOIN plan_items AS pi ON p.id = pi.pid LEFT JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const orders = {};
+        for (const row of result.rows) {
+          if (orders.hasOwnProperty(row.o_id)) {
+            orders[row.o_id]["items"].push({
+              id: row.oi_id,
+              piid: row.oi_piid,
+              plan_item: null,
+              price: row.oi_price
+            });
+          } else {
+            const order = {
+              id: row.o_id,
+              type: row.o_type,
+              state_code: row.o_state_code,
+              state: trim(row.o_state),
+              summary: row.o_summary,
+              payment: row.o_payment,
+              start_at: row.o_start_at,
+              stop_at: row.o_stop_at,
+              vid: row.o_vid,
+              vehicle: null,
+              pid: row.e_pid,
+              plan: null,
+              qid: row.e_qid,
+              quotation: null,
+              items: [{
+                id: row.oi_id,
+                piid: row.oi_piid,
+                plan_item: null,
+                price: row.oi_price
+              }],
+              created_at: row.o_created_at,
+              updated_at: row.o_updated_at
+            }
+            orders[row.o_id] = order;
+          }
+        }
+
+        const oids = Object.keys(orders);
+        const vidstmp = [];
+        const qidstmp = [];
+        const pidstmp = [];
+        const piidstmp = [];
+        for (const oid of oids) {
+          vidstmp.push(orders[oid]["vid"]);
+          qidstmp.push(orders[oid]["qid"]);
+          pidstmp.push(orders[oid]["pid"]);
+          for (const item of orders[oid]["items"]) {
+            piidstmp.push(item["plan_item"]);
+          }
+        }
+        const vids = [... new Set(vidstmp)];
+        const qids = [... new Set(qidstmp)];
+        const pids = [... new Set(pidstmp)];
+
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid));
+        async_serial_ignore<Object>(pvs, [], (vreps) => {
+          const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+          for (const vehicle of vehicles) {
+            for (const oid of oids) {
+              const order = orders[oid];
+              if (vehicle["id"] === order["vid"]) {
+                order["vehicle"] = vehicle; // a vehicle may belong to many orders
+              }
+            }
+          }
+          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
+          async_serial_ignore<Object>(pqs, [], (qreps) => {
+            const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+            for (const quotation of quotations) {
+              for (const oid of oids) {
+                const order = orders[oid];
+                if (quotation["id"] === order["qid"]) {
+                  order["quotation"] = quotation;
+                  break; // a quotation only belongs to an order
+                }
+              }
+            }
+            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], null, "getPlan", pid));
+            async_serial_ignore<Object>(pps, [], (preps) => {
+              const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
+              for (const oid of oids) {
+                const order = orders[oid];
+                for (const plan of plans) {
+                  if (plan["id"] === order["pid"]) {
+                    order["plan"] = plan; // a plan may belong to many orders
+                  }
+                  for (const planitem of plan["items"]) {
+                    for (const orderitem of order["items"]) {
+                      if (planitem["id"] === orderitem["piid"]) {
+                        orderitem["plan_item"] = planitem;
+                      }
+                    }
+                  }
+                }
+              }
+              const multi = cache.multi();
+              for (const oid of oids) {
+                const order = orders[oid];
+                multi.hset("order-entities", oid, JSON.stringify(order));
+                multi.zadd("sale-orders", order.updated_at.getTime(), oid);
+              }
+              multi.exec((err: Error, _: any[]) => {
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            });
+          });
+        });
+      }
+    });
+  });
+}
+
+function refresh_underwrite(db: PGClient, cache: RedisClient, domain: string) {
+  return new Promise<void>((resolve, reject) => {
+    db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u LEFT JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: ResultSet) => {
+      if (err) {
+        reject(err);
+      } else {
+        const underwrites = {};
+        for (const row of result.rows) {
+          if (underwrites.hasOwnProperty(row.u_id)) {
+            underwrites[row.u_id]["photos"].push(trim(row.up_photo));
+          } else {
+            underwrites[row.u_id] = {
+              id: row.u_id,
+              oid: row.u_oid,
+              order: null,
+              opid: row.u_opid,
+              operator: null,
+              plan_time: row.u_plan_time,
+              real_time: row.u_real_time,
+              validate_place: trim(row.u_validate_place),
+              validate_update_time: row.u_validate_update_time,
+              real_place: trim(row.u_real_place),
+              real_update_time: row.u_real_update_time,
+              certificate_state: row.u_certificate_state,
+              problem_type: row.u_problem_type,
+              problem_description: trim(row.u_problem_description),
+              note: trim(row.u_note),
+              note_update_time: row.u_note_update_time,
+              underwrite_result: trim(row.u_underwrite_result),
+              result_update_time: row.u_result_update_time,
+              created_at: row.u_created_at,
+              updated_at: row.u_updated_at,
+              photos: [trim(row.up_photo)]
+            };
+          }
+        }
+        const uwids = Object.keys(underwrites);
+
+        const oridstmp = [];
+        const opidstmp = [];
+
+        for (const uwid of uwids) {
+          const underwrite = underwrites[uwid];
+          if (underwrite.opid) {
+            opidstmp.push(underwrite.opid);
+          }
+          oridstmp.push(underwrite.oid);
+        }
+
+        const orids = [... new Set(oridstmp)];
+        const opids = [... new Set(opidstmp)];
+
+        const multi = cache.multi();
+        for (const oid of orids) {
+          multi.hget("order-entities", oid);
+        }
+        multi.exec((e: Error, results: string[]) => {
+          if (e) {
+            reject(e);
+          } else {
+            const orders = results.filter(r => r !== null).map(r => JSON.parse(r));
+            for (const order of orders) {
+              for (const uwid of uwids) {
+                const underwrite = underwrites[uwid];
+                if (underwrite.oid === order.id) {
+                  underwrite["order"] = order;
+                }
+              }
+            }
+            let pops = opids.map(opid => rpc<Object>(domain, servermap["operator"], null, "getOperator", opid));
+            async_serial_ignore<Object>(pops, [], (opreps) => {
+              const operators = opreps.filter(o => o["code"] === 200).map(o => o["data"]);
+              for (const operator of operators) {
+                for (const uwid of uwids) {
+                  const underwrite = underwrites[uwid];
+                  if (underwrite.opid === operator.id) {
+                    underwrite["operator"] = operator;
+                  }
+                }
+              }
+              const multi1 = cache.multi();
+              for (const uwid of uwids) {
+                const underwrite = underwrites[uwid];
+                multi1.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+              }
+            });
+          }
+        });
+      }
+    });
+  });
+}
+
+processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string) => {
+  log.info("refresh");
+  const pdo = refresh_driver_orders(db, cache, domain);
+  const ppo = refresh_plan_orders(db, cache, domain);
+  const pso = refresh_sale_orders(db, cache, domain);
+  const puw = refresh_underwrite(db, cache, domain);
+  //let ps = [ppo, pdo, pso, puw];
+  let ps = [ppo];
+  async_serial_ignore<void>(ps, [], () => {
+    log.info("refresh done!");
+    done();
   });
 });
 
-
+function trim(str: string) {
+  if (str) {
+    return str.trim();
+  } else {
+    return null;
+  }
+}
 
 processor.run();
 
-console.log("Start processor at " + config.addr);
+log.info("Start processor at " + config.addr);
