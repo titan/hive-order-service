@@ -51,10 +51,10 @@ function formatNum(Source: string, Length: number): string {
   }
   return strTemp + Source;
 }
+
 function getLocalTime(nS) {
   return new Date(parseInt(nS) * 1000).toLocaleString().replace(/:\d{1,2}$/, " ");
 }
-
 
 function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids, acc, cb) {
   if (piids.length === 0) {
@@ -195,7 +195,20 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
     });
   }
 }
-processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, uid: string, order_id: string, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, cbflag: string) => {
+
+function increase_order_no(cache): Promise<number> {
+  return new Promise<number> ((resolve, reject) => {
+    cache.incr("order-no", (err: Error, no: number) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(no);
+      }
+    });
+  });
+}
+
+processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, cbflag: string) => {
   log.info("placeOrder");
   let event_id = uuid.v1();
   let state_code = 1;
@@ -203,193 +216,109 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
   let type = 0;
   let plan_data1 = "新增plan计划";
   let plan_data = JSON.stringify(plan_data1);
-  cache.incr("order-no", (err, strNo) => {
-    if (err) {
-      log.info(err + "cache incr err");
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 500,
-        msg: err.message
-      }));
-    } else if (!strNo) {
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 404,
-        msg: "No new order no"
-      }));
-    } else {
-      let strno = String(strNo);
-      let no: string = formatNum(strno, 7);
-      let date = new Date();
-      let year = date.getFullYear();
-      let pids = [];
-      for (let plan in plans) {
-        pids.push(plan);
-      }
-      // log.info(pids);
-      let sum = 0;
-      for (let i of pids) {
-        let str = i.substring(24);
-        let num = +str;
-        sum += num;
-      }
-      let sum2 = sum + "";
-      let sum1 = formatNum(sum2, 3);
-      let order_no = "1" + "110" + "001" + sum1 + year + no;
-      db.query("BEGIN", (err: Error) => {
+  increase_order_no(cache).then((no: number) => {
+    let strno: string = formatNum(String(no), 7);
+    let date = new Date();
+    let year = date.getFullYear();
+    let pids = [];
+    for (let plan in plans) {
+      pids.push(plan);
+    }
+    // log.info(pids);
+    let sum = 0;
+    for (let i of pids) {
+      let str = i.substring(24);
+      let num = parseInt(str);
+      sum += num;
+    }
+    let sum2 = sum + "";
+    let sum1 = formatNum(sum2, 3);
+    let order_no = "1" + "110" + "001" + sum1 + year + no;
+
+    const pbegin = new Promise<void>((resolve, reject) => {
+      db.query("BEGIN", [], (err: Error) => {
         if (err) {
-          log.error(err, "query error");
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 500,
-            msg: err.message
-          }));
-          done();
+          reject(err);
         } else {
-          db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
-            if (err) {
-              db.query("ROLLBACK", [], (err1: Error) => {
-                log.error(err, "insert into orders error");
-                cache.setex(cbflag, 30, JSON.stringify({
-                  code: 500,
-                  msg: err.message
-                }));
-                done();
-              });
-            } else {
-              db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, plan_data], (err: Error, result: ResultSet) => {
-                if (err) {
-                  db.query("ROLLBACK", [], (err1: Error) => {
-                    log.error(err, "insert into order_events error");
-                    cache.setex(cbflag, 30, JSON.stringify({
-                      code: 500,
-                      msg: err.message
-                    }));
-                    done();
-                  });
-                } else {
-                  let args1 = {
-                    domain: domain,
-                    uid: uid,
-                    order_id: order_id,
-                    vid: vid,
-                    plans: plans,
-                    qid: qid,
-                    pmid: pmid,
-                    promotion: promotion,
-                    service_ratio: service_ratio,
-                    summary: summary,
-                    payment: payment,
-                    v_value: v_value,
-                    expect_at: expect_at,
-                    cbflag: cbflag
-                  };
-                  insert_plan_order_recursive(db, done, order_id, args1, pids.map(pid => pid), {}, (pid_oiids_obj) => {
-                    let p = rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid);
-                    let p2 = rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid);
-                    let plan_promises: Promise<Object>[] = [];
-                    for (let pid of pids) {
-                      let p1 = rpc<Object>(domain, servermap["plan"], null, "getPlan", pid);
-                      plan_promises.push(p1);
-                    }
-                    p.then((v) => {
-                      if (err) {
-                        log.info("call vehicle error");
-                        cache.setex(cbflag, 30, JSON.stringify({
-                          code: 500,
-                          msg: err.message
-                        }));
-                        done();
-                      } else {
-                        let vehicle = v["data"];
-                        p2.then((q) => {
-                          if (err) {
-                            log.info("call quotation error");
-                            cache.setex(cbflag, 30, JSON.stringify({
-                              code: 500,
-                              msg: err.message
-                            }));
-                            done();
-                          } else {
-                            let quotation = q["data"];
-                            async_serial<Object>(plan_promises, [], (plans2: Object[]) => {
-                              let plan_items = [];
-                              for (let plan1 of plans2) {
-                                for (let piid in plan1["items"]) {
-                                  plan_items.push(plan1["items"][piid]);
-                                }
-                              }
-                              let piids = [];
-                              let prices = [];
-                              for (let pid in plans) {
-                                for (let piid in plans[pid]) {
-                                  piids.push(piid);
-                                  prices.push(plans[pid][piid]);
-                                }
-                              }
-                              let item_ids = [];
-                              for (let pid in pid_oiids_obj) {
-                                item_ids.push(pid_oiids_obj[pid]);
-                              }
-                              let items = [];
-                              log.info("piids=============" + piids + "prices=========" + prices + "item_ids====================" + item_ids + "plan_items========================" + plan_items);
-                              let len = Math.min(piids.length, prices.length, plan_items.length);
-                              for (let i = 0; i < len; i++) {
-                                let item_id = piids.shift();
-                                let price = prices.shift();
-                                // let pid = item_ids.shift();
-                                let plan_item = plan_items.shift();
-                                items.push({ item_id, price, plan_item });
-                              }
-                              let created_at = new Date().getTime();
-                              let created_at1 = getLocalTime(created_at / 1000);
-                              let start_at = null;
-                              let stop_at = null;
-                              let orders = [order_id, expect_at];
-                              let order = {
-                                summary: summary, state: state, payment: payment, v_value: v_value, p_price: promotion, stop_at: stop_at, service_ratio: service_ratio, plan: plans2, items: items, expect_at: expect_at, state_code: state_code, id: order_no, order_id: order_id, qid: qid, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at
-                              };
-                              let multi = cache.multi();
-                              multi.zadd("plan-orders", created_at, order_id);
-                              multi.zadd("orders", created_at, order_id);
-                              multi.zadd("orders-" + uid, created_at, order_id);
-                              multi.hset("orderNo-id", order_no, order_id);
-                              multi.hset("order-vid-" + vid, qid, order_id);
-                              multi.hset("orderid-vid", order_id, vid);
-                              multi.hset("order-entities", order_id, JSON.stringify(order));
-                              multi.exec((err3, replies) => {
-                                if (err3) {
-                                  log.error(err3, "query redis error");
-                                  cache.setex(cbflag, 30, JSON.stringify({
-                                    code: 500,
-                                    msg: err3.message
-                                  }));
-                                } else {
-                                  log.info("placeAnOrder: done");
-                                  cache.setex(cbflag, 30, JSON.stringify({
-                                    code: 200,
-                                    data: order_id
-                                  }));
-                                }
-                                done(); // close db and cache connection
-                              });
-                            }, (e: Error) => {
-                              log.error(e);
-                              cache.setex(cbflag, 30, JSON.stringify({
-                                code: 500,
-                                msg: e.message
-                              }));
-                              done(); // close db and cache connection
-                            });
-                          }
-                        });
-                      }
-                    });
-                  });
-                }
-              });
-            }
-          });
+          resolve();
         }
       });
+    });
+
+    const porder = new Promise<void>((resolve, reject) => {
+      db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, orde_no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no], (err: Error) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    const pcommit = new Promise<void>((resolve, reject) => {
+      db.query("COMMIT", [], (err: Error) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    let ps = [pbegin, porder]
+
+    for (const pid of Object.keys(plans)) {
+      const porderex = new Promise<void>((resolve, reject) => {
+        db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at], (err: Error, result: ResultSet) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+      ps.push(porderex);
+      for (let piid in plans[pid]) {
+        const item_id = uuid.v1();
+        const p = new Promise<void>((resolve, reject) => {
+          db.query("INSERT INTO order_items(id, pid, piid, price) VALUES($1,$2,$3,$4)", [item_id, pid, piid, plans[pid][piid]], (err: Error) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+        ps.push(p);
+      }
     }
+
+    ps.push(pcommit);
+
+    async_serial<void>(ps, [], () => {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: { id: order_id, no: order_no }
+      }));
+      sync_plan_orders(db, cache, domain, uid, order_id).then(() => {
+        log.info("Place an plan order %s", order_id);
+        done();
+      });
+    }, (e: Error) => {
+      db.query("ROLLBACK", [], (err: Error) => {
+        cache.setex(cbflag, 30, JSON.stringify({
+          code: 500,
+          msg: e.message
+        }));
+        done();
+      });
+    });
+  }).catch((e: Error) => {
+    cache.setex(cbflag, 30, JSON.stringify({
+      code: 500,
+      msg: e.message
+    }));
+    done();
   });
 });
 
@@ -487,8 +416,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
           }));
           done();
           return;
-        }
-        else {
+        } else {
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: ResultSet) => {
             if (err) {
               log.error(err, "insert info order_events error in placeAnDriverOrder");
@@ -1323,9 +1251,13 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
   }
 }
 
-function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) {
+function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void> {
+  return sync_driver_orders(db, cache, domain, null);
+}
+
+function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE", [], (e: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: ResultSet) => {
       if (e) {
         reject(e);
       } else {
@@ -1392,8 +1324,15 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
             const multi = cache.multi();
             for (const oid of oids) {
               const order = orders[oid];
+              const updated_at = order.updated_at.getTime();
+              const uid = order["uid"];
+              const vid = order["vid"];
+              multi.zadd("driver_orders", updated_at, oid);
+              multi.zadd("orders", updated_at, oid);
+              multi.hset("vid-doid", vid, JSON.stringify(order["drivers"].map(d => d["id"])));
+              multi.hset("driver-entities-", vid, JSON.stringify(order["drivers"]));
               multi.hset("order-entities", oid, JSON.stringify(order));
-              multi.zadd("driver-orders", order.updated_at.getTime(), oid);
+              multi.zadd("driver-orders", updated_at, oid);
             }
             multi.exec((err: Error, _: any[]) => {
               if (err) {
@@ -1409,9 +1348,13 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
   });
 }
 
-function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
+function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void> {
+  return sync_plan_orders(db, cache, domain, null);
+}
+
+function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1425,7 +1368,10 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               plan_item: null,
               price: row.oi_price
             });
+            orders[row.o_id]["pids"][row.e_pid] = 0;
           } else {
+            const pids = {};
+            pids[row.e_pid] = 0;
             const order = {
               id: row.o_id,
               type: row.o_type,
@@ -1437,8 +1383,8 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               stop_at: row.o_stop_at,
               vid: row.o_vid,
               vehicle: null,
-              pid: row.e_pid,
-              plan: null,
+              pids: pids,
+              plans: [],
               qid: row.e_qid,
               quotation: null,
               service_ratio: row.e_service_ratio,
@@ -1464,7 +1410,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
         for (const oid of oids) {
           vidstmp.push(orders[oid]["vid"]);
           qidstmp.push(orders[oid]["qid"]);
-          pidstmp.push(orders[oid]["pid"]);
+          pidstmp.push(Object.keys(orders[oid]["pid"]));
           for (const item of orders[oid]["items"]) {
             piidstmp.push(item["plan_item"]);
           }
@@ -1473,7 +1419,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
         const qids = [... new Set(qidstmp)];
         const pids = [... new Set(pidstmp)];
 
-        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], null, "getVehicle", vid));
+        let pvs = vids.map(vid => rpc<Object>(domain, servermap["vehicle"], uid, "getVehicle", vid));
         async_serial_ignore<Object>(pvs, [], (vreps) => {
           const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
           for (const vehicle of vehicles) {
@@ -1484,8 +1430,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               }
             }
           }
-          console.log("responses: %j", vreps);
-          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], null, "getQuotation", qid));
+          let pqs = qids.map(qid => rpc<Object>(domain, servermap["quotation"], uid, "getQuotation", qid));
           async_serial_ignore<Object>(pqs, [], (qreps) => {
             const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
             for (const quotation of quotations) {
@@ -1497,18 +1442,16 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
                 }
               }
             }
-            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], null, "getPlan", pid));
+            let pps = pids.map(pid => rpc<Object>(domain, servermap["plan"], uid, "getPlan", pid));
             async_serial_ignore<Object>(pps, [], (preps) => {
               const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
               for (const oid of oids) {
                 const order = orders[oid];
                 for (const plan of plans) {
-                  log.info("plan id: %s", plan["id"]);
-                  if (plan["id"] === order["pid"]) {
-                    order["plan"] = plan; // a plan may belong to many orders
+                  if (order["pids"].hasOwnProperty(plan["id"])) {
+                    order["plans"].push(plan); // a plan may belong to many orders
                   }
                   for (const planitem of plan["items"]) {
-                    log.info("plan item id: %s", planitem["id"]);
                     for (const orderitem of order["items"]) {
                       if (planitem["id"] === orderitem["piid"]) {
                         orderitem["plan_item"] = planitem;
@@ -1520,8 +1463,18 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
               const multi = cache.multi();
               for (const oid of oids) {
                 const order = orders[oid];
+                delete order["pids"];
+                const order_no = order["no"];
+                const vid = order["vid"];
+                const qid = order["qid"];
+                const updated_at = order["updated_at"].getTime();
+                multi.zadd("plan-orders", updated_at, oid);
+                multi.zadd("orders", updated_at, oid);
+                multi.hset("orderNo-id", order_no, oid);
+                multi.hset("order-vid-" + vid, qid, oid);
+                multi.hset("orderid-vid", oid, vid);
                 multi.hset("order-entities", oid, JSON.stringify(order));
-                multi.zadd("plan-orders", order.updated_at.getTime(), oid);
+                multi.zadd("plan-orders", updated_at, oid);
               }
               multi.exec((err: Error, _: any[]) => {
                 if (err) {
@@ -1538,9 +1491,13 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) {
   });
 }
 
-function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
+function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void>  {
+  return sync_sale_orders(db, cache, domain, null);
+}
+
+function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE", [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1643,8 +1600,13 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) {
               const multi = cache.multi();
               for (const oid of oids) {
                 const order = orders[oid];
+                const vid = order["vehicle"]["vid"];
+                const updated_at = order.updated_at.getTime();
+                multi.zadd("orders", updated_at, oid);
+                multi.hset("vehicle-order", vid, oid);
+                multi.hset("orderid-vid", oid, vid);
                 multi.hset("order-entities", oid, JSON.stringify(order));
-                multi.zadd("sale-orders", order.updated_at.getTime(), oid);
+                multi.zadd("sale-orders", updated_at, oid);
               }
               multi.exec((err: Error, _: any[]) => {
                 if (err) {
@@ -1760,8 +1722,7 @@ processor.call("refresh", (db: PGClient, cache: RedisClient, done: DoneFunction,
   const ppo = refresh_plan_orders(db, cache, domain);
   const pso = refresh_sale_orders(db, cache, domain);
   const puw = refresh_underwrite(db, cache, domain);
-  //let ps = [ppo, pdo, pso, puw];
-  let ps = [ppo];
+  let ps = [ppo, pdo, pso, puw];
   async_serial_ignore<void>(ps, [], () => {
     log.info("refresh done!");
     done();
