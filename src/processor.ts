@@ -246,7 +246,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     });
 
     const porder = new Promise<void>((resolve, reject) => {
-      db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, orde_no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no], (err: Error) => {
+      db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no], (err: Error) => {
         if (err) {
           reject(err);
         } else {
@@ -1257,7 +1257,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
 
 function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: ResultSet) => {
       if (e) {
         reject(e);
       } else {
@@ -1268,6 +1268,7 @@ function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, ui
           } else {
             const order = {
               id: row.o_id,
+              no: trim(row.o_no),
               type: row.o_type,
               state_code: row.o_state_code,
               state: trim(row.o_state),
@@ -1354,7 +1355,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) :
 
 function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1374,6 +1375,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
             pids[row.e_pid] = 0;
             const order = {
               id: row.o_id,
+              no: trim(row.o_no),
               type: row.o_type,
               state_code: row.o_state_code,
               state: trim(row.o_state),
@@ -1497,7 +1499,7 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) :
 
 function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1513,6 +1515,7 @@ function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid:
           } else {
             const order = {
               id: row.o_id,
+              no: trim(row.o_no),
               type: row.o_type,
               state_code: row.o_state_code,
               state: trim(row.o_state),
