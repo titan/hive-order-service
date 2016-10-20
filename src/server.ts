@@ -103,7 +103,8 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
     if (err) {
       rep({ code: 500, msg: err });
     } else {
-      rep({ code: 200, data: JSON.parse(result) });
+      let nowDate = (new Date()).getTime();
+      rep({ code: 200, data: JSON.parse(result), nowDate: nowDate });
     }
   });
 });
@@ -126,10 +127,8 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
       log.info(err);
       rep({ code: 500, msg: err.message });
     }
-    else if (result === null) {
-      rep({ code: 404, msg: "not found" });
-    }
-    else {
+    else if (result != null && result != '') {
+      log.info("[" + result + "]---------")
       let multi = ctx.cache.multi();
       for (let order_key of result) {
         multi.hget(order_entities, order_key);
@@ -139,9 +138,13 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
           log.error(err2, "query error");
         } else {
           // log.info("replies==========" + replies);
-          rep({ code: 200, data: replies.map(e => JSON.parse(e)) });
+          let nowDate = (new Date()).getTime();
+          rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
         }
       });
+    }
+    else {
+      rep({ code: 404, msg: "not found" });
     }
   });
 });

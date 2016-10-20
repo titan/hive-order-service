@@ -190,14 +190,14 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
       acc.push(val);
       async_serial_driver(ps, acc, cb);
     })
-    .catch(e => {
-      async_serial_driver(ps, acc, cb);
-    });
+      .catch(e => {
+        async_serial_driver(ps, acc, cb);
+      });
   }
 }
 
 function increase_order_no(cache): Promise<number> {
-  return new Promise<number> ((resolve, reject) => {
+  return new Promise<number>((resolve, reject) => {
     cache.incr("order-no", (err: Error, no: number) => {
       if (err) {
         reject(err);
@@ -1011,120 +1011,121 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       }
     });
   })
-  .then(() => {
-    return new Promise<Object>((resolve, reject) => {
-      log.info("redis " + uwid);
-      cache.hget("underwrite-entities", uwid, function (err, result) {
-        if (result) {
-          resolve(JSON.parse(result));
-        } else if (err) {
-          log.info(err);
-          reject(err);
-        } else {
-          resolve(null);
-        }
-      });
-    });
-  })
-  .then((underwrite: Object) => {
-    return new Promise<Object>((resolve, reject) => {
-      if (underwrite != null) {
-        underwrite["underwrite_result"] = underwrite_result;
-        underwrite["result_update_time"] = update_time;
-        underwrite["updated_at"] = update_time;
-        let multi = cache.multi();
-        multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
-        multi.exec((err: Error, _) => {
-          if (err) {
+    .then(() => {
+      return new Promise<Object>((resolve, reject) => {
+        log.info("redis " + uwid);
+        cache.hget("underwrite-entities", uwid, function (err, result) {
+          if (result) {
+            resolve(JSON.parse(result));
+          } else if (err) {
             log.info(err);
             reject(err);
           } else {
-            resolve(underwrite);
+            resolve(null);
           }
         });
-      } else {
-        reject("underwrite is null");
-      }
-    });
-  })
-  .then((underwrite: Object) => {
-    return new Promise<Object>((resolve, reject) => {
-      let orderid = underwrite["order_id"];
-      console.log("orderid------------" + orderid);
-      cache.hget("order-entities", orderid, function (err, result) {
-        if (result) {
-          let order = JSON.parse(result);
-          let expect_at = new Date(order["expect_at"]);
-          log.info(expect_at + "expect_at" + order["expect_at"]);
-          let start_at = expect_at;
-          if (expect_at.getTime() <= update_time.getTime()) {
-            let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
-            start_at = new Date(date);
-          }
-          let stop_at = new Date(start_at.getTime() + 31536000000);
-          order["start_at"] = start_at;
-          order["stop_at"] = stop_at;
-          order["state_code"] = 3;
-          order["state"] = "已核保";
-          db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
+      });
+    })
+    .then((underwrite: Object) => {
+      return new Promise<Object>((resolve, reject) => {
+        if (underwrite != null) {
+          underwrite["underwrite_result"] = underwrite_result;
+          underwrite["result_update_time"] = update_time;
+          underwrite["updated_at"] = update_time;
+          let multi = cache.multi();
+          multi.hset("underwrite-entities", uwid, JSON.stringify(underwrite));
+          multi.exec((err: Error, _) => {
             if (err) {
               log.info(err);
               reject(err);
             } else {
-              resolve(order);
+              resolve(underwrite);
             }
           });
         } else {
-          reject(err);
+          reject("underwrite is null");
         }
       });
-    });
-  })
-  .then((order: Object) => {
-    let orderid = order["order_id"];
-    let multi = cache.multi();
-    multi.hset("order-entities", orderid, JSON.stringify(order));
-    multi.setex(callback, 30, JSON.stringify({
-      code: 200,
-      uwid: uwid
-    }));
-    multi.exec((err2, result2) => {
-      if (result2) {
-        if (underwrite_result.trim() === "通过") {
-          log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
-          let openid = rpc<Object>(domain, servermap["profile"], null, "getUserOpenId", order["vehicle"]["vehicle"]["user_id"]);
-          log.info("openid------------" + openid);
-          let No = order["vehicle"]["vehicle"]["license_no"];
-          let CarNo = order["vehicle"]["vehicle"]["familyName"];
-          let name = order["vehicle"]["vehicle"]["owner"]["name"];
-
-          http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
-            log.info(`Notify response: ${res.statusCode}`);
-            // consume response body
-            res.resume();
-          }).on("error", (e) => {
-            log.error(`Notify error: ${e.message}`);
-          });
+    })
+    .then((underwrite: Object) => {
+      return new Promise<Object>((resolve, reject) => {
+        let orderid = underwrite["order_id"];
+        console.log("orderid------------" + orderid);
+        cache.hget("order-entities", orderid, function (err, result) {
+          if (result) {
+            let order = JSON.parse(result);
+            let expect_at = new Date(order["expect_at"]);
+            log.info(expect_at + "expect_at" + order["expect_at"]);
+            let start_at = expect_at;
+            if (expect_at.getTime() <= update_time.getTime()) {
+              let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
+              start_at = new Date(date);
+            }
+            let stop_at = new Date(start_at.getTime() + 31536000000);
+            order["start_at"] = start_at;
+            order["stop_at"] = stop_at;
+            order["state_code"] = 3;
+            order["state"] = "已核保";
+            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
+              if (err) {
+                log.info(err);
+                reject(err);
+              } else {
+                resolve(order);
+              }
+            });
+          } else {
+            reject(err);
+          }
+        });
+      });
+    })
+    .then((order: Object) => {
+      let orderid = order["order_id"];
+      let multi = cache.multi();
+      multi.hset("order-entities", orderid, JSON.stringify(order));
+      multi.setex(callback, 30, JSON.stringify({
+        code: 200,
+        uwid: uwid
+      }));
+      multi.exec((err2, result2) => {
+        if (result2) {
+          if (underwrite_result.trim() === "通过") {
+            log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
+            let profile = rpc<Object>(domain, servermap["profile"], null, "getUserOpenId", order["vehicle"]["vehicle"]["user_id"]);
+            profile.then(openid => {
+              log.info("openid------------" + openid);
+              let No = order["vehicle"]["vehicle"]["license_no"];
+              let CarNo = order["vehicle"]["vehicle"]["familyName"];
+              let name = order["vehicle"]["vehicle"]["owner"]["name"];
+              http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
+                log.info(`Notify response: ${res.statusCode}`);
+                // consume response body
+                res.resume();
+              }).on("error", (e) => {
+                log.error(`Notify error: ${e.message}`);
+              });
+            })
+          }
+          underwrite_trigger.send(msgpack.encode({ orderid, order }));
+          done();
+        } else {
+          cache.setex(callback, 30, JSON.stringify({
+            code: 500,
+            msg: "update order cache error"
+          }));
+          done();
         }
-        underwrite_trigger.send(msgpack.encode({ orderid, order }));
-        done();
-      } else {
-        cache.setex(callback, 30, JSON.stringify({
-          code: 500,
-          msg: "update order cache error"
-        }));
-        done();
-      }
+      });
+    })
+    .catch(error => {
+      cache.setex(callback, 30, JSON.stringify({
+        code: 500,
+        msg: error.message
+      }));
+      log.info("err" + error);
+      done();
     });
-  })
-  .catch(error => {
-    cache.setex(callback, 30, JSON.stringify({
-      code: 500,
-      msg: error.message
-    }));
-    log.info("err" + error);
-    done();
-  });
 });
 
 // 修改实际验车地点
@@ -1176,58 +1177,58 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
       }
     });
   })
-  .then(() => {
-    return new Promise<Object>((resolve, reject) => {
-      log.info("redis " + uwid);
-      cache.hget("underwrite-entities", uwid, function (err, result) {
-        if (result) {
-          resolve(JSON.parse(result));
-        } else if (err) {
-          log.info(err);
-          reject(err);
-        } else {
-          resolve(null);
-        }
+    .then(() => {
+      return new Promise<Object>((resolve, reject) => {
+        log.info("redis " + uwid);
+        cache.hget("underwrite-entities", uwid, function (err, result) {
+          if (result) {
+            resolve(JSON.parse(result));
+          } else if (err) {
+            log.info(err);
+            reject(err);
+          } else {
+            resolve(null);
+          }
+        });
       });
-    });
-  })
-  .then((underwrite: Object) => {
-    if (underwrite != null) {
-      let uw = cb(underwrite);
-      let multi = cache.multi();
-      multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
-      multi.setex(cbflag, 30, JSON.stringify({
-        code: 200,
-        uwid: uwid
-      }));
-      multi.exec((err: Error, _) => {
-        if (err) {
-          log.error(err, "update underwrite cache error");
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 500,
-            msg: "update underwrite cache error"
-          }));
-        }
-        underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+    })
+    .then((underwrite: Object) => {
+      if (underwrite != null) {
+        let uw = cb(underwrite);
+        let multi = cache.multi();
+        multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
+        multi.setex(cbflag, 30, JSON.stringify({
+          code: 200,
+          uwid: uwid
+        }));
+        multi.exec((err: Error, _) => {
+          if (err) {
+            log.error(err, "update underwrite cache error");
+            cache.setex(cbflag, 30, JSON.stringify({
+              code: 500,
+              msg: "update underwrite cache error"
+            }));
+          }
+          underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+          done();
+        });
+      } else {
+        cache.setex(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: "Not found underwrite"
+        }));
+        log.info("Not found underwrite");
         done();
-      });
-    } else {
+      }
+    })
+    .catch(error => {
       cache.setex(cbflag, 30, JSON.stringify({
-        code: 404,
-        msg: "Not found underwrite"
+        code: 500,
+        msg: error.message
       }));
-      log.info("Not found underwrite");
+      log.info("err" + error);
       done();
-    }
-  })
-  .catch(error => {
-    cache.setex(cbflag, 30, JSON.stringify({
-      code: 500,
-      msg: error.message
-    }));
-    log.info("err" + error);
-    done();
-  });
+    });
 }
 
 function select_order_item_recursive(db, done, piids, acc, cb) {
@@ -1251,11 +1252,11 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
   }
 }
 
-function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void> {
+function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_driver_orders(db, cache, domain, null);
 }
 
-function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
+function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: ResultSet) => {
       if (e) {
@@ -1349,11 +1350,11 @@ function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, ui
   });
 }
 
-function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void> {
+function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_plan_orders(db, cache, domain, null);
 }
 
-function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
+function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = p.id WHERE o.deleted = FALSE and e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
@@ -1493,11 +1494,11 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
   });
 }
 
-function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string) : Promise<void>  {
+function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_sale_orders(db, cache, domain, null);
 }
 
-function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string) : Promise<void> {
+function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.pid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
