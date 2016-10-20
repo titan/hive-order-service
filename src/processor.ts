@@ -1092,20 +1092,28 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
         if (result2) {
           if (underwrite_result.trim() === "通过") {
             log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
-            let profile = rpc<Object>(domain, servermap["profile"], null, "getUserOpenId", order["vehicle"]["vehicle"]["user_id"]);
-            profile.then(openid => {
-              log.info("openid------------" + openid);
-              let No = order["vehicle"]["vehicle"]["license_no"];
-              let CarNo = order["vehicle"]["vehicle"]["familyName"];
-              let name = order["vehicle"]["vehicle"]["owner"]["name"];
-              http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${name}&orderid=${orderid}`, (res) => {
-                log.info(`Notify response: ${res.statusCode}`);
-                // consume response body
-                res.resume();
-              }).on("error", (e) => {
-                log.error(`Notify error: ${e.message}`);
-              });
-            })
+
+            cache.hget("wxuser", order["vehicle"]["vehicle"]["user_id"], function (err, result3) {
+              if (err) {
+                log.info("get wxuser err");
+              } else {
+                let openid = result3;
+                log.info("openid------------" + openid);
+                let No = order["vehicle"]["vehicle"]["license_no"];
+                let CarNo = order["vehicle"]["vehicle"]["family_name"];
+                let name = order["vehicle"]["vehicle"]["owner"]["name"];
+                let No1 = String(No);
+                let CarNo1 = String(CarNo);
+                let Name = String(name);
+                http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${Name}&orderId=${orderid}`, (res) => {
+                  log.info(`Notify response: ${res.statusCode}`);
+                  // consume response body
+                  res.resume();
+                }).on("error", (e) => {
+                  log.error(`Notify error: ${e.message}`);
+                });
+              }
+            });
           }
           underwrite_trigger.send(msgpack.encode({ orderid, order }));
           done();
