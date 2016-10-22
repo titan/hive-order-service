@@ -468,6 +468,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                         multi.zadd("driver_orders", created_at, order_id);
                         multi.zadd("orders", created_at, order_id);
                         multi.zadd("orders-" + uid, created_at, order_id);
+                        multi.zadd("newOrders", created_at, order_id);
                         multi.hset("vid-doid", vid, vid_doid);
                         multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
                         multi.hset("order-entities", order_id, JSON.stringify(order));
@@ -578,8 +579,11 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
           async_serial_ignore(ps, [], (_) => {
             order["state_code"] = state_code;
             order["state"] = state;
+            let updated_at = new Date().getTime();
             let multi = cache.multi();
             multi.hset("order-entities", order_id, JSON.stringify(order));
+            multi.zrem("newOrders", order_id);
+            multi.zadd("newPays", updated_at, order_id);
             multi.setex(cbflag, 30, JSON.stringify({
               code: 200,
               data: "Success"
@@ -817,7 +821,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
   });
 });
 // 生成核保
-processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, oid: string, plan_time: any, validate_place: string, validate_update_time: any, callback: string) => {
+processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, oid: string, plan_time: any, validate_place: string, validate_update_time: any, callback: string, domain:any) => {
   log.info("createUnderwrite ");
   let pcreate = new Promise<void>((resolve, reject) => {
     db.query("INSERT INTO underwrites (id, oid, plan_time, validate_place, validate_update_time) VALUES ($1, $2, $3, $4, $5)", [uwid, oid, plan_time, validate_place, validate_update_time], (err: Error) => {
@@ -1481,6 +1485,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 const updated_at = order["updated_at"].getTime();
                 multi.zadd("plan-orders", updated_at, oid);
                 multi.zadd("orders", updated_at, oid);
+                multi.zadd("newOrders", updated_at, oid);
                 multi.hset("orderNo-id", order_no, oid);
                 multi.hset("order-vid-" + vid, qid, oid);
                 multi.hset("orderid-vid", oid, vid);
