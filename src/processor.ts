@@ -7,6 +7,7 @@ import * as uuid from "node-uuid";
 import * as msgpack from "msgpack-lite";
 import * as nanomsg from "nanomsg";
 import * as http from "http";
+import * as queryString from "querystring";
 let log = bunyan.createLogger({
   name: "order-processor",
   streams: [
@@ -821,7 +822,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
   });
 });
 // 生成核保
-processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, oid: string, plan_time: any, validate_place: string, validate_update_time: any, callback: string, domain:any) => {
+processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, oid: string, plan_time: any, validate_place: string, validate_update_time: any, callback: string, domain: any) => {
   log.info("createUnderwrite ");
   let pcreate = new Promise<void>((resolve, reject) => {
     db.query("INSERT INTO underwrites (id, oid, plan_time, validate_place, validate_update_time) VALUES ($1, $2, $3, $4, $5)", [uwid, oid, plan_time, validate_place, validate_update_time], (err: Error) => {
@@ -1096,7 +1097,6 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
         if (result2) {
           if (underwrite_result.trim() === "通过") {
             log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
-
             cache.hget("wxuser", order["vehicle"]["vehicle"]["user_id"], function (err, result3) {
               if (err) {
                 log.info("get wxuser err");
@@ -1104,18 +1104,48 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                 let openid = result3;
                 log.info("openid------------" + openid);
                 let No = order["vehicle"]["vehicle"]["license_no"];
-                let CarNo = order["vehicle"]["vehicle"]["family_name"];
+                let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
                 let name = order["vehicle"]["vehicle"]["owner"]["name"];
                 let No1 = String(No);
                 let CarNo1 = String(CarNo);
                 let Name = String(name);
-                http.get(`http://${wxhost}/wx/wxpay/tmsgUnderwriting?user=${openid}&No=${No}&CarNo=${CarNo}&Name=${Name}&orderId=${orderid}`, (res) => {
-                  log.info(`Notify response: ${res.statusCode}`);
-                  // consume response body
-                  res.resume();
-                }).on("error", (e) => {
-                  log.error(`Notify error: ${e.message}`);
+                var postData = queryString.stringify({
+                  "user": openid,
+                  "No": No1,
+                  "CarNo": CarNo1,
+                  "Name": Name,
+                  "orderId": orderid
                 });
+
+                var options = {
+                  hostname: wxhost,
+                  port: 80,
+                  path: "/wx/wxpay/tmsgUnderwriting",
+                  method: "GET",
+                  headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Content-Length": Buffer.byteLength(postData)
+                  }
+                };
+
+                var req = http.request(options, (res) => {
+                  log.info(`STATUS: ${res.statusCode}`);
+                  log.info(`HEADERS: ${JSON.stringify(res.headers)}`);
+                  res.setEncoding("utf8");
+                  res.on("data", (chunk) => {
+                    log.info(`BODY: ${chunk}`);
+                  });
+                  res.on("end", () => {
+                    log.info("No more data in response.");
+                  });
+                });
+                req.on("error", (e) => {
+                  log.info(`problem with request: ${e.message}`);
+                });
+
+                // write data to request body
+                req.write(postData);
+                req.end();
               }
             });
           }
