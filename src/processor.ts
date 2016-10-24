@@ -63,7 +63,7 @@ function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids
   } else {
     let item_id = uuid.v1();
     let piid = piids.shift();
-    db.query("INSERT INTO order_items(id,piid,pid, price) VALUES($1,$2,$3,$4)", [item_id, piid, pid, items[piid]], (err: Error) => {
+    db.query("INSERT INTO order_items(id,piid,oid, price) VALUES($1,$2,$3,$4)", [item_id, piid, order_id, items[piid]], (err: Error) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -104,7 +104,7 @@ function insert_order_item_recursive(db, done, plans, pid, args1, piids, acc, cb
   } else {
     let item_id = uuid.v1();
     let piid = piids.shift();
-    db.query("INSERT INTO order_items(id, pid, piid, price) VALUES($1,$2,$3,$4)", [item_id, pid, piid, plans[pid][piid]], (err: Error) => {
+    db.query("INSERT INTO order_items(id, oid, piid, price) VALUES($1,$2,$3,$4)", [item_id, args1.order_id, piid, plans[pid][piid]], (err: Error) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -1278,7 +1278,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
     cb(acc);
   } else {
     let piid = piids.shift();
-    db.query("SELECT id,price,pid FROM order_items WHERE id = $1 AND deleted = FALSE", [piid], (err: Error, result: ResultSet) => {
+    db.query("SELECT id,price,oid FROM order_items WHERE id = $1 AND deleted = FALSE", [piid], (err: Error, result: ResultSet) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -1286,7 +1286,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
           done();
         });
       } else {
-        let item = { id: piid, price: result["price"], pid: result["pid"], plan_item: null };
+        let item = { id: piid, price: result["price"], oid: result["oid"], plan_item: null };
         acc.push(item);
         select_order_item_recursive(db, done, piids, acc, cb);
       }
