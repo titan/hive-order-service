@@ -1455,7 +1455,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
         for (const oid of oids) {
           vidstmp.push(orders[oid]["vid"]);
           qidstmp.push(orders[oid]["qid"]);
-          pidstmp.push(Object.keys(orders[oid]["pid"]));
+          pidstmp.push(Object.keys(orders[oid]["pids"]));
           for (const item of orders[oid]["items"]) {
             piidstmp.push(item["plan_item"]);
           }
@@ -1515,6 +1515,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 const updated_at = order["updated_at"].getTime();
                 multi.zadd("plan-orders", updated_at, oid);
                 multi.zadd("orders", updated_at, oid);
+                multi.zadd("orders-" + order["vehicle"]["user_id"], updated_at, oid);
                 multi.zadd("newOrders", updated_at, oid);
                 multi.hset("orderNo-id", order_no, oid);
                 multi.hset("order-vid-" + vid, qid, oid);
