@@ -3,14 +3,16 @@ SRCDIR=./src
 DISTDIR=./dist
 SERVER=$(DISTDIR)/$(MODULE)-server.js
 PROCESSOR=$(DISTDIR)/$(MODULE)-processor.js
+CRON=$(DISTDIR)/$(MODULE)-cron.js
 TMPSERVER=$(DISTDIR)/server.js
 TMPPROCESSOR=$(DISTDIR)/processor.js
+TMPCRON=$(DISTDIR)/cron.js
 NPM=npm
 
-all: $(SERVER) $(PROCESSOR)
+all: $(SERVER) $(PROCESSOR) $(CRON)
 
-$(TMPSERVER) $(TMPPROCESSOR): $(SRCDIR)/server.ts $(SRCDIR)/processor.ts
-	tsc || rm $(TMPSERVER) $(TMPPROCESSOR)
+$(TMPSERVER) $(TMPPROCESSOR) $(TMPCRON): $(SRCDIR)/server.ts $(SRCDIR)/processor.ts $(SRCDIR)/cron.ts
+	tsc || rm $(TMPSERVER) $(TMPPROCESSOR) $(TMPCRON)
 
 $(SERVER): $(TMPSERVER)
 	mv $< $@
@@ -18,8 +20,14 @@ $(SERVER): $(TMPSERVER)
 $(PROCESSOR): $(TMPPROCESSOR)
 	mv $< $@
 
+$(CRON): $(TMPCRON)
+	mv $< $@
+
 $(SRCDIR)/server.ts: node_modules typings
+
 $(SRCDIR)/processor.ts: node_modules typings
+
+$(SRCDIR)/cron.ts: node_modules typings
 
 node_modules:
 	$(NPM) install
