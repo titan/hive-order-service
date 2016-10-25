@@ -460,7 +460,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                         if (err) {
                           log.info("get vid-doid error");
                         } else if (result1) {
-                          vid_doid = JSON.parse(result1);
+                          vid_doid.push(result1);
                         }
                         vid_doid.push(order_id);
                         let order = { summary: summary, state: state, payment: payment, drivers: drivers, created_at: created_at1, state_code: state_code, order_id: order_id, type: type, vehicle: vehicle };

@@ -6,9 +6,7 @@ import * as uuid from "node-uuid";
 import { servermap, triggermap } from "hive-hostmap";
 import * as schedule from "node-schedule";
 import { verify, uuidVerifier, stringVerifier, arrayVerifier, objectVerifier, booleanVerifier } from "hive-verify";
-const Redis = require('redis');
-const createClient = require('redis');
-const RedisClient = require('redis');
+import { createClient, RedisClient } from "redis";
 const pg = require('pg');
 const ResultSet = require('pg');
 
@@ -33,7 +31,7 @@ let log = bunyan.createLogger({
     }
   ]
 });
-let redis = Redis.createClient(6379, process.env["CACHE_HOST"]);
+let redis = createClient(6379, process.env["CACHE_HOST"]);
 let config = {
   user: process.env["DB_USER"], //env var: PGUSER
   host: process.env["DB_HOST"],
@@ -69,14 +67,14 @@ function checkInvalidTime(created_at) {
 
 
 
-function update_group_vehicles_recursive(db, done, redis, vids, acc, cb) {
+function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb) {
   if (vids.length === 0) {
     done();
     cb(acc);
   }
   else {
     let vid = vids.shift();
-    db.query("UPDATE group_vehicles SET type = $1 WHERE id = $2", [1, vid], (err, result) => {
+    db.query("UPDATE group_vehicles SET type = $1, updated_at = $2 WHERE id = $3", [1, nowdate, vid], (err, result) => {
       if (err) {
         log.info(err);
         done();
@@ -85,7 +83,7 @@ function update_group_vehicles_recursive(db, done, redis, vids, acc, cb) {
         redis.hget("vid-gid", vid, function (err, result) {
           if (err) {
             log.info(`this ${vid} err to get gid`);
-          } else if (result == "") {
+          } else if (result == "" || result === null) {
             log.info(`not found gid ,this vid is ${vid}`);
           } else {
             redis.hget("group-entities", result, function (err1, result1) {
@@ -102,7 +100,7 @@ function update_group_vehicles_recursive(db, done, redis, vids, acc, cb) {
                 // cache.hset("group-entities", result, JSON.parse(group_entities));
                 let group = { gid: result, group: group_entities };
                 acc.push(group);
-                update_group_vehicles_recursive(db, done, redis, vids, acc, cb);
+                update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb);
               }
             });
           }
@@ -113,14 +111,14 @@ function update_group_vehicles_recursive(db, done, redis, vids, acc, cb) {
 }
 
 
-function update_order_recursive(db, done, redis, oids, acc, cb) {
+function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
   if (oids.length === 0) {
     cb(acc);
     done();
   }
   else {
     let oid = oids.shift();
-    db.query("UPDATE orders SET state_code = $1,state = $2 WHERE id = $3", [4, "已生效", oid], (err, result) => {
+    db.query("UPDATE orders SET state_code = $1,state = $2, updated_at = $3 WHERE id = $4", [4, "已生效", nowdate, oid], (err, result) => {
       if (err) {
         log.info(err);
         done();
@@ -140,7 +138,7 @@ function update_order_recursive(db, done, redis, oids, acc, cb) {
             order_entities["state_code"] = 4;
             let order = { oid: oid, order: order_entities };
             acc.push(order);
-            update_order_recursive(db, done, redis, oids, acc, cb);
+            update_order_recursive(db, done, redis, nowdate, oids, acc, cb);
           }
         });
       }
@@ -197,7 +195,7 @@ function orderEffective() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE id = '19f30e30-9825-11e6-8194-5f70de362af2' ", [], (err, result) => {
+        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3 ", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
@@ -205,7 +203,6 @@ function orderEffective() {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
-            console.log("================1" + result);
             const orders: Object[] = [];
             for (const row of result.rows) {
               const order = {
@@ -223,7 +220,6 @@ function orderEffective() {
             }
             const effectiveOrders = [];
             let efos = orders.filter(o => checkEffectiveTime(o["start_at"]) === true).map(o => o)
-            console.log("===============2" + efos);
             let oids = [];
             let vids = [];
             for (let efo of efos) {
@@ -232,27 +228,28 @@ function orderEffective() {
               oids.push(efo["id"]);
               vids.push(efo["vid"]);
             }
-            update_order_recursive(db, done, redis, oids.map(oid => oid), [], (order_entities) => {
-              update_group_vehicles_recursive(db, done, redis, vids.map(vid => vid), [], (group_entities) => {
-                let multi = redis.mulit();
+            let nowdate = new Date();
+            update_order_recursive(db, done, redis, nowdate, oids.map(oid => oid), [], (order_entities) => {
+              update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
+                let multi = redis.multi();
                 for (let order_entitie of order_entities) {
                   for (let group_entitie of group_entities) {
-                    multi.hset("order-entities", order_entitie["oid"], order_entitie["order"]);
-                    multi.hset("group-entities", group_entitie["gid"], group_entitie["group"]);
-                    multi.exec((err, replise) => {
-                      if (err) {
-                        log.info(err);
-                        reject(err);
-                        done();
-                      }
-                      else {
-                        log.info("all exec success  and  done");
-                        resolve();
-                        done();
-                      }
-                    });
+                    multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
+                    multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
                   }
                 }
+                multi.exec((err, replise) => {
+                  if (err) {
+                    log.info(err);
+                    reject(err);
+                    done();
+                  }
+                  else {
+                    log.info("all exec success  and  done");
+                    resolve();
+                    done();
+                  }
+                });
               });
             });
           }
