@@ -234,7 +234,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     }
     let sum2 = sum + "";
     let sum1 = formatNum(sum2, 3);
-    let order_no = "1" + "110" + "001" + sum1 + year + no;
+    let order_no = "1" + "110" + "001" + sum1 + year + strno;
 
     const pbegin = new Promise<void>((resolve, reject) => {
       db.query("BEGIN", [], (err: Error) => {
@@ -282,7 +282,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
       for (let piid in plans[pid]) {
         const item_id = uuid.v1();
         const p = new Promise<void>((resolve, reject) => {
-          db.query("INSERT INTO order_items(id, pid, piid, price) VALUES($1,$2,$3,$4)", [item_id, pid, piid, plans[pid][piid]], (err: Error) => {
+          db.query("INSERT INTO order_items(id, oid, piid, price) VALUES($1,$2,$3,$4)", [item_id, order_id, piid, plans[pid][piid]], (err: Error) => {
             if (err) {
               reject(err);
             } else {
@@ -1310,8 +1310,8 @@ function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, ui
             orders[row.o_id]["dids"].push(row.e_pid);
           } else {
             const order = {
-              id: row.o_id,
-              no: trim(row.o_no),
+              order_id: row.o_id,
+              id: trim(row.o_no),
               type: row.o_type,
               state_code: row.o_state_code,
               state: trim(row.o_state),
@@ -1400,6 +1400,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
   return new Promise<void>((resolve, reject) => {
     db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
+        log.info("==================" + err);
         reject(err);
       } else {
         const orders = {};
@@ -1417,8 +1418,8 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
             const pids = {};
             pids[row.e_pid] = 0;
             const order = {
-              id: row.o_id,
-              no: trim(row.o_no),
+              order_id: row.o_id,
+              id: trim(row.o_no),
               type: row.o_type,
               state_code: row.o_state_code,
               state: trim(row.o_state),
@@ -1433,7 +1434,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               qid: row.e_qid,
               quotation: null,
               service_ratio: row.e_service_ratio,
-              expact_at: row.e_expact_at,
+              expect_at: row.e_expect_at,
               items: [{
                 id: row.oi_id,
                 oid: row.oi_oid,

@@ -71,6 +71,7 @@ function checkInvalidTime(created_at) {
 
 function update_group_vehicles_recursive(db, done, redis, vids, acc, cb) {
   if (vids.length === 0) {
+    done();
     cb(acc);
   }
   else {
@@ -196,7 +197,7 @@ function orderEffective() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3", [], (err, result) => {
+        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE id = '19f30e30-9825-11e6-8194-5f70de362af2' ", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
@@ -204,6 +205,7 @@ function orderEffective() {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
+            console.log("================1" + result);
             const orders: Object[] = [];
             for (const row of result.rows) {
               const order = {
@@ -220,18 +222,17 @@ function orderEffective() {
               orders.push(order);
             }
             const effectiveOrders = [];
-            let efo = orders.filter(o => checkEffectiveTime(o["start_at"]) === true).reduce((acc, o) => {
-              o["state"] = "已生效";
-              o["state_code"] = 4;
-              return acc;
-            }, effectiveOrders);
+            let efos = orders.filter(o => checkEffectiveTime(o["start_at"]) === true).map(o => o)
+            console.log("===============2" + efos);
             let oids = [];
             let vids = [];
-            for (let effectiveOrder of effectiveOrders) {
-              oids.push(effectiveOrder["id"]);
-              vids.push(effectiveOrder["vid"]);
+            for (let efo of efos) {
+              efo["state"] = "已生效";
+              efo["state_code"] = 4;
+              oids.push(efo["id"]);
+              vids.push(efo["vid"]);
             }
-            update_order_recursive(db, done, redis, oids.map(oid => oid), {}, (order_entities) => {
+            update_order_recursive(db, done, redis, oids.map(oid => oid), [], (order_entities) => {
               update_group_vehicles_recursive(db, done, redis, vids.map(vid => vid), [], (group_entities) => {
                 let multi = redis.mulit;
                 for (let order_entitie of order_entities) {
@@ -287,12 +288,11 @@ function orderInvalid() {
               }
               orders.push(order);
             }
-            const invalidOrders = [];
-            let ivo = orders.filter(o => checkInvalidTime(o["created_at"]) === true).reduce((acc, o) => {
-              o["state"] = "已失效";
-              o["state_code"] = 5;
-              return acc;
-            }, invalidOrders);
+            let invalidOrders = orders.filter(o => checkInvalidTime(o["created_at"]) === true).map(o => o);
+            for (let invalidOrder of invalidOrders) {
+              invalidOrder["state"] = "已失效";
+              invalidOrder["state_code"] = 5;
+            }
             get_order_uid_recursive(db, done, redis, invalidOrders.map(order => order), {}, (orders) => {
               let mulit = redis.mulit;
               for (let order of orders) {
