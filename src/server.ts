@@ -487,7 +487,7 @@ svc.call("alterValidatePlace", permissions, (ctx: Context, rep: ResponseFunction
 // 工作人员填充验车信息
 svc.call("fillUnderwrite", permissions, (ctx: Context, rep: ResponseFunction, uwid: string, real_place: string, opid: string, certificate_state: number, problem_type: any, problem_description: string, note: string, photos: any) => {
   log.info("fillUnderwrite uuid is " + ctx.uid);
-  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state), stringVerifier("problem_description", problem_description), stringVerifier("note", note)], (errors: string[]) => {
+  if (!verify([uuidVerifier("uwid", uwid), uuidVerifier("opid", opid), stringVerifier("real_place", real_place), stringVerifier("real_place", real_place), numberVerifier("certificate_state", certificate_state)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -622,66 +622,43 @@ svc.call("getUnderwriteByOrderNumber", permissions, (ctx: Context, rep: Response
   })) {
     return;
   }
-  ctx.cache.zrange("orders", 0, -1, function (err, result) {
+  ctx.cache.hget("orderNo-id", oid, function (err, result) {
     if (result) {
-      let multi = ctx.cache.multi();
-      for (let orderid of result) {
-        multi.hget("order-entities", orderid);
-      }
-      multi.exec((err2, result2) => {
-        if (result2) {
-          let orderid: any;
-          result2.map(order => {
-            if (JSON.parse(order).id === oid) {
-              orderid = JSON.parse(order).order_id;
+      let orderid = result;
+      ctx.cache.zrange("underwrite", 0, -1, function (err3, result3) {
+        if (result3) {
+          let multi = ctx.cache.multi();
+          for (let uwid of result3) {
+            multi.hget("underwrite-entities", uwid);
+          }
+          multi.exec((err4, result4) => {
+            if (result4) {
+              let underWrite: any;
+              result4.map(underwrite => {
+                if (JSON.parse(underwrite).order_id === orderid) {
+                  log.info("underwrite" + JSON.parse(underwrite));
+                  underWrite = JSON.parse(underwrite);
+                }
+              });
+              if (underWrite != null) {
+                rep({ code: 200, underWrite: underWrite });
+              } else {
+                rep({ code: 404, msg: "Not Found underwrite" });
+              }
+            } else if (err4) {
+              rep({ code: 500, msg: err4 });
+            } else {
+              rep({ code: 404, msg: "Not Found underwrite-entities" });
             }
           });
-          if (orderid != null) {
-            ctx.cache.zrange("underwrite", 0, -1, function (err3, result3) {
-              if (result3) {
-                let multi = ctx.cache.multi();
-                for (let uwid of result3) {
-                  multi.hget("underwrite-entities", uwid);
-                }
-                multi.exec((err4, result4) => {
-                  if (result4) {
-                    let underWrite: any;
-                    result4.map(underwrite => {
-                      if (JSON.parse(underwrite).order_id === orderid) {
-                        log.info("underwrite" + JSON.parse(underwrite));
-                        underWrite = JSON.parse(underwrite);
-                      }
-                    });
-                    if (underWrite != null) {
-                      rep({ code: 200, underWrite: underWrite });
-                    } else {
-                      rep({ code: 404, msg: "Not Found underwrite" });
-                    }
-                  } else if (err4) {
-                    rep({ code: 500, msg: err4 });
-                  } else {
-                    rep({ code: 404, msg: "Not Found underwrite-entities" });
-                  }
-                });
-              } else if (err3) {
-                rep({ code: 500, msg: err3 });
-              } else {
-                rep({ code: 404, msg: "Not Found underwrites" });
-              }
-            });
-          } else {
-            rep({ code: 404, msg: "Cannot match orderid" });
-          }
-        } else if (err2) {
-          rep({ code: 500, msg: err });
+        } else if (err3) {
+          rep({ code: 500, msg: err3 });
         } else {
-          rep({ code: 404, msg: "Not Found order-entities" });
+          rep({ code: 404, msg: "Not Found underwrites" });
         }
       });
-    } else if (err) {
-      rep({ code: 500, msg: err });
     } else {
-      rep({ code: 404, msg: "Not Found orders" });
+      rep({ code: 404, msg: "Cannot match orderid" });
     }
   });
 });
