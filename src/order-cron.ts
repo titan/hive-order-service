@@ -234,7 +234,7 @@ function orderEffective() {
             }
             update_order_recursive(db, done, redis, oids.map(oid => oid), [], (order_entities) => {
               update_group_vehicles_recursive(db, done, redis, vids.map(vid => vid), [], (group_entities) => {
-                let multi = redis.mulit;
+                let multi = redis.mulit();
                 for (let order_entitie of order_entities) {
                   for (let group_entitie of group_entities) {
                     multi.hset("order-entities", order_entitie["oid"], order_entitie["order"]);
