@@ -291,16 +291,16 @@ function orderInvalid() {
               invalidOrder["state_code"] = 5;
             }
             get_order_uid_recursive(db, done, redis, invalidOrders.map(order => order), {}, (orders) => {
-              let mulit = redis.mulit;
+              let multi = redis.multi;
               for (let order of orders) {
-                mulit.hdel("order_entitie", order["id"]);
-                mulit.hdel("orderid-vid", order["id"]);
-                mulit.zrem("orders", order["id"]);
-                mulit.zrem(`orders-${order["uid"]}`, order["id"]);
-                mulit.hdel("orderNo-id", order["no"]);
-                mulit.zrem("plan-orders", order["id"]);
+                multi.hdel("order_entitie", order["id"]);
+                multi.hdel("orderid-vid", order["id"]);
+                multi.zrem("orders", order["id"]);
+                multi.zrem(`orders-${order["uid"]}`, order["id"]);
+                multi.hdel("orderNo-id", order["no"]);
+                multi.zrem("plan-orders", order["id"]);
               }
-              mulit.exec((err, result) => {
+              multi.exec((err, result) => {
                 if (err) {
                   log.info(err);
                   reject(err);
