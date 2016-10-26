@@ -66,7 +66,6 @@ function checkInvalidTime(created_at) {
 }
 
 
-
 function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb) {
   if (vids.length === 0) {
     done();
@@ -145,7 +144,7 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
     });
   }
 }
-function get_order_uid_recursive(db, done, redis, orders, acc, cb) {
+function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
   if (orders.length === 0) {
     cb(acc);
     done();
@@ -157,6 +156,7 @@ function get_order_uid_recursive(db, done, redis, orders, acc, cb) {
         let vehicle = v["data"];
         order["uid"] = vehicle["user_id"];
         acc.push(order);
+        get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb);
       }
     });
   }
@@ -290,8 +290,9 @@ function orderInvalid() {
               invalidOrder["state"] = "已失效";
               invalidOrder["state_code"] = 5;
             }
-            get_order_uid_recursive(db, done, redis, invalidOrders.map(order => order), {}, (orders) => {
-              let multi = redis.multi;
+            let nowdate = new Date();
+            get_order_uid_recursive(db, done, redis, nowdate, invalidOrders.map(order => order), [], (orders) => {
+              let multi = redis.multi();
               for (let order of orders) {
                 multi.hdel("order_entitie", order["id"]);
                 multi.hdel("orderid-vid", order["id"]);
@@ -319,11 +320,5 @@ function orderInvalid() {
     });
   });
 }
-
-
-
-
-
-
 
 log.info("Start timing-cron");

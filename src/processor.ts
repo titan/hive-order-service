@@ -1456,7 +1456,9 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
         for (const oid of oids) {
           vidstmp.push(orders[oid]["vid"]);
           qidstmp.push(orders[oid]["qid"]);
-          pidstmp.push(Object.keys(orders[oid]["pids"]));
+          for (const pid of Object.keys(orders[oid]["pids"])) {
+            pidstmp.push(pid);
+          }
           for (const item of orders[oid]["items"]) {
             piidstmp.push(item["plan_item"]);
           }
