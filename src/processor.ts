@@ -1071,7 +1071,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             order["stop_at"] = stop_at;
             order["state_code"] = 3;
             order["state"] = "已核保";
-            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $5", [start_at, stop_at, orderid], (err: Error) => {
+            db.query("UPDATE orders SET start_at = $1, stop_at = $2, state_code = 3, state = '已核保' WHERE id = $3", [start_at, stop_at, orderid], (err: Error) => {
               if (err) {
                 log.info(err);
                 reject(err);
@@ -1096,20 +1096,20 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       multi.exec((err2, result2) => {
         if (result2) {
           if (underwrite_result.trim() === "通过") {
-            log.info("userid------------" + order["vehicle"]["vehicle"]["user_id"]);
-            cache.hget("wxuser", order["vehicle"]["vehicle"]["user_id"], function (err, result3) {
+            log.info("userid------------" + order["vehicle"]["user_id"]);
+            cache.hget("wxuser", order["vehicle"]["user_id"], function (err, result3) {
               if (err) {
                 log.info("get wxuser err");
               } else {
                 let openid = result3;
                 log.info("openid------------" + openid);
-                let No = order["vehicle"]["vehicle"]["license_no"];
+                let No = order["vehicle"]["license_no"];
                 let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
-                let name = order["vehicle"]["vehicle"]["owner"]["name"];
+                let name = order["vehicle"]["owner"]["name"];
                 let No1 = String(No);
                 let CarNo1 = String(CarNo);
                 let Name = String(name);
-                var postData = queryString.stringify({
+                let postData = queryString.stringify({
                   "user": openid,
                   "No": No1,
                   "CarNo": CarNo1,
@@ -1117,7 +1117,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                   "orderId": orderid
                 });
 
-                var options = {
+                let options = {
                   hostname: wxhost,
                   port: 80,
                   path: "/wx/wxpay/tmsgUnderwriting",
@@ -1128,7 +1128,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                   }
                 };
 
-                var req = http.request(options, (res) => {
+                let req = http.request(options, (res) => {
                   log.info(`STATUS: ${res.statusCode}`);
                   log.info(`HEADERS: ${JSON.stringify(res.headers)}`);
                   res.setEncoding("utf8");

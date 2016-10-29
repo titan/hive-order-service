@@ -128,7 +128,7 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
           if (err) {
             log.info(`get order_entities for this oid = ${oid} err`);
             done();
-          } else if (result == "") {
+          } else if (result == "" || result === null) {
             log.info(`not found order_entities to this ${oid}`);
             done();
           } else {
@@ -144,18 +144,27 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
     });
   }
 }
-function get_order_uid_recursive(db, done, redis, orders, acc, cb) {
+function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
   if (orders.length === 0) {
     cb(acc);
     done();
   } else {
     let order = orders.shift();
-    let p = rpc<Object>("mobile", servermap["vehicle"], null, "getVehicle", order["vid"]);
-    p.then((v) => {
-      if (v["code"] === 200) {
-        let vehicle = v["data"];
-        order["uid"] = vehicle["user_id"];
-        acc.push(order);
+    db.query("UPDATE orders SET state_code = $1,state = $2, updated_at = $3,deleted = $4 WHERE id = $5", [5, "已失效", nowdate, true, order["id"]], (err, result) => {
+      if (err) {
+        log.info(err);
+        done();
+      }
+      else {
+        let p = rpc<Object>("mobile", servermap["vehicle"], null, "getVehicle", order["vid"]);
+        p.then((v) => {
+          if (v["code"] === 200) {
+            let vehicle = v["data"];
+            order["uid"] = vehicle["user_id"];
+            acc.push(order);
+            get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb);
+          }
+        });
       }
     });
   }
@@ -218,7 +227,7 @@ function orderEffective() {
               orders.push(order);
             }
             const effectiveOrders = [];
-            let efos = orders.filter(o => checkEffectiveTime(o["start_at"]) === true).map(o => o)
+            let efos = orders.filter(o => checkEffectiveTime(o["start_at"]) === true).map(o => o);
             let oids = [];
             let vids = [];
             for (let efo of efos) {
@@ -289,7 +298,8 @@ function orderInvalid() {
               invalidOrder["state"] = "已失效";
               invalidOrder["state_code"] = 5;
             }
-            get_order_uid_recursive(db, done, redis, invalidOrders.map(order => order), {}, (orders) => {
+            let nowdate = new Date();
+            get_order_uid_recursive(db, done, redis, nowdate, invalidOrders.map(order => order), [], (orders) => {
               let multi = redis.multi();
               for (let order of orders) {
                 multi.hdel("order_entitie", order["id"]);
