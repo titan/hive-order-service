@@ -30,6 +30,7 @@ let log = bunyan.createLogger({
 let order_entities = "order-entities";
 let orders = "orders-";
 let order_key = "orders";
+let plan_order_key = "plan-orders";
 let driver_entities = "driver-entities-";
 let order_vid = "order-vid-";
 let orderNo_id = "orderNo-id";
@@ -73,15 +74,21 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
     if (err) {
       rep({ code: 500, msg: err.message });
     } else {
-      let multi = ctx.cache.multi();
-      for (let id of result) {
-        multi.hget(order_entities, id);
-      }
-      multi.exec((err, result2) => {
-        if (err) {
-          rep({ code: 500, msg: err.message });
+      ctx.cache.zcount("plan-orders", "-inf", "+inf", function (err1, result1) {
+        if (err1) {
+          log.info("zcount planorders err" + err1);
         } else {
-          rep({ code: 200, data: result2.map(e => JSON.parse(e)) });
+          let multi = ctx.cache.multi();
+          for (let id of result) {
+            multi.hget(order_entities, id);
+          }
+          multi.exec((err, result2) => {
+            if (err) {
+              rep({ code: 500, msg: err.message });
+            } else {
+              rep({ code: 200, data: result2.map(e => JSON.parse(e)), length: result1 });
+            }
+          });
         }
       });
     }
@@ -181,7 +188,7 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
 
 // 获取驾驶人信息
 svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
-  log.info("getorders");
+  log.info("getdriverorders");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
     rep({
       code: 400,
