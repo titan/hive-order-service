@@ -31,7 +31,7 @@ let log = bunyan.createLogger({
     }
   ]
 });
-let redis = createClient(6379, process.env["CACHE_HOST"]);
+let redis = createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"]);
 let config = {
   user: process.env["DB_USER"], //env var: PGUSER
   host: process.env["DB_HOST"],
@@ -144,9 +144,9 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
     });
   }
 }
-function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
+function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
   if (orders.length === 0) {
-    cb(acc);
+    cb(acc, failings);
     done();
   } else {
     let order = orders.shift();
@@ -162,13 +162,21 @@ function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
             let vehicle = v["data"];
             order["uid"] = vehicle["user_id"];
             acc.push(order);
-            get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
+          } else {
+            failings.push(order["id"]);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
           }
         });
       }
     });
   }
 }
+
+// function queryselect() {
+
+// }
+
 
 
 let rule = new schedule.RecurrenceRule();
@@ -189,8 +197,10 @@ rule1.second = 0;
 let timing1 = schedule.scheduleJob(rule1, function () {
   const pdo = orderInvalid();
   let ps = [pdo];
-  async_serial_ignore<void>(ps, [], () => {
-    log.info("refresh done!");
+  async_serial_ignore<void>(ps, [], (failorders) => {
+    let nowdate = new Date();
+    redis.hset("cron-failorders", nowdate, failorders);
+    log.info(`refresh done! and the error orders is ${failorders}`);
   });
 });
 
@@ -203,7 +213,7 @@ function orderEffective() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3 ", [], (err, result) => {
+        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3 AND type = 0 ", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
@@ -238,28 +248,28 @@ function orderEffective() {
             }
             let nowdate = new Date();
             update_order_recursive(db, done, redis, nowdate, oids.map(oid => oid), [], (order_entities) => {
-              update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
-                let multi = redis.multi();
-                for (let order_entitie of order_entities) {
-                  for (let group_entitie of group_entities) {
-                    multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
-                    multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
-                  }
+              // update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
+              let multi = redis.multi();
+              for (let order_entitie of order_entities) {
+                // for (let group_entitie of group_entities) {
+                multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
+                // multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
+                // }
+              }
+              multi.exec((err, replise) => {
+                if (err) {
+                  log.info(err);
+                  reject(err);
+                  done();
                 }
-                multi.exec((err, replise) => {
-                  if (err) {
-                    log.info(err);
-                    reject(err);
-                    done();
-                  }
-                  else {
-                    log.info("all exec success  and  done");
-                    resolve();
-                    done();
-                  }
-                });
+                else {
+                  log.info("all exec success  and  done");
+                  resolve();
+                  done();
+                }
               });
             });
+            // });
           }
         });
       }
@@ -273,7 +283,7 @@ function orderInvalid() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, state_code, state, created_at FROM orders WHERE state_code = 0", [], (err, result) => {
+        db.query("SELECT id, no, vid, state_code, state, created_at FROM orders WHERE state_code = 1 AND type = 0", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
@@ -299,15 +309,14 @@ function orderInvalid() {
               invalidOrder["state_code"] = 5;
             }
             let nowdate = new Date();
-            get_order_uid_recursive(db, done, redis, nowdate, invalidOrders.map(order => order), [], (orders) => {
+            get_order_uid_recursive(db, done, nowdate, invalidOrders.map(invalidOrder => invalidOrder), [], [], (delorders, failorders) => {
               let multi = redis.multi();
-              for (let order of orders) {
-                multi.hdel("order_entitie", order["id"]);
-                multi.hdel("orderid-vid", order["id"]);
-                multi.zrem("orders", order["id"]);
-                multi.zrem(`orders-${order["uid"]}`, order["id"]);
-                multi.hdel("orderNo-id", order["no"]);
-                multi.zrem("plan-orders", order["id"]);
+              for (let delorder of delorders) {
+                multi.hdel("order_entitie", delorder["id"]);
+                multi.hdel("orderid-vid", delorder["id"]);
+                multi.zrem("orders", delorder["id"]);
+                multi.zrem(`orders-${delorder["uid"]}`, delorder["id"]);
+                multi.zrem("plan-orders", delorder["id"]);
               }
               multi.exec((err, result) => {
                 if (err) {
@@ -316,7 +325,7 @@ function orderInvalid() {
                   done();
                 } else {
                   log.info("all exec success  and  done");
-                  resolve();
+                  resolve(failorders);
                   done();
                 }
               });
