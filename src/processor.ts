@@ -63,7 +63,7 @@ function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids
   } else {
     let item_id = uuid.v1();
     let piid = piids.shift();
-    db.query("INSERT INTO order_items(id,piid,oid, price) VALUES($1,$2,$3,$4)", [item_id, piid, order_id, items[piid]], (err: Error) => {
+    db.query("INSERT INTO order_items(id, piid, oid, price) VALUES($1, $2, $3, $4)", [item_id, piid, order_id, items[piid]], (err: Error) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -71,7 +71,7 @@ function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids
           done();
         });
       } else {
-        acc.push(item_id);
+        // acc.push(item_id);
         insert_sale_order_items_recursive(db, done, order_id, pid, items, piids, acc, cb);
       }
     });
@@ -270,7 +270,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
 
     for (const pid of Object.keys(plans)) {
       const porderex = new Promise<void>((resolve, reject) => {
-        db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at], (err: Error, result: ResultSet) => {
+        db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at, vehicle_real_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at, v_value], (err: Error, result: ResultSet) => {
           if (err) {
             reject(err);
           } else {
@@ -469,7 +469,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                         multi.zadd("driver_orders", created_at, order_id);
                         multi.zadd("orders", created_at, order_id);
                         multi.zadd("orders-" + uid, created_at, order_id);
-                        multi.zadd("newOrders", created_at, order_id);
+                        multi.zadd("new-orders-id", created_at, order_id);
                         multi.hset("vid-doid", vid, vid_doid);
                         multi.hset("driver-entities-", vid, JSON.stringify(order_drivers));
                         multi.hset("order-entities", order_id, JSON.stringify(order));
@@ -583,8 +583,8 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
             let updated_at = new Date().getTime();
             let multi = cache.multi();
             multi.hset("order-entities", order_id, JSON.stringify(order));
-            multi.zrem("newOrders", order_id);
-            multi.zadd("newPays", updated_at, order_id);
+            multi.zrem("new-orders-id", order_id);
+            multi.zadd("new-pays-id", updated_at, order_id);
             multi.setex(cbflag, 30, JSON.stringify({
               code: 200,
               data: "Success"
@@ -618,7 +618,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
   let state = "已创建订单";
   let type = 2;
   let sale_id = uuid.v1();
-  let sale_data = "新增第三方代售订单";
+  let sale_data = JSON.stringify("新增第三方代售订单");
   let piids = [];
   for (let item in items) {
     piids.push(item);
@@ -654,10 +654,10 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                 done();
               });
             } else {
-              db.query("INSERT INTO sale_order_ext(id, oid,pid,qid) VALUES($1, $2,$3,$4)", [event_id, order_id, pid, qid], (err: Error, result: ResultSet) => {
+              db.query("INSERT INTO sale_order_ext(oid,pid,qid) VALUES($1, $2, $3)", [order_id, pid, qid], (err: Error, result: ResultSet) => {
                 if (err) {
                   db.query("ROLLBACK", [], (err1: Error) => {
-                    log.error(err, "insert into order_events error");
+                    log.error(err, "insert into sale_order_ext error");
                     cache.setex(cbflag, 30, JSON.stringify({
                       code: 500,
                       msg: err.message
@@ -695,7 +695,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                           let item_id = piids.shift();
                           let price = prices.shift();
                           let plan_item = plan_items.shift();
-                          items.push({ item_id, price, plan_item });
+                          items1.push({ item_id, price, plan_item });
                         }
                         let created_at = new Date().getTime();
                         let created_at1 = getLocalTime(created_at / 1000);
@@ -1063,7 +1063,11 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             log.info(expect_at + "expect_at" + order["expect_at"]);
             let start_at = expect_at;
             if (expect_at.getTime() <= update_time.getTime()) {
-              let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
+              let date1 = new Date();
+              let date2 = date1.getFullYear() + "-" + (date1.getMonth() + 1) + "-" + (date1.getDate());
+              let date3 = new Date(date2);
+              let date = date3.getTime() + 86400000;
+              // let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
               start_at = new Date(date);
             }
             let stop_at = new Date(start_at.getTime() + 31536000000);
@@ -1425,6 +1429,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               state: trim(row.o_state),
               summary: row.o_summary,
               payment: row.o_payment,
+              v_value: row.vehicle_real_value,
               start_at: row.o_start_at,
               stop_at: row.o_stop_at,
               vid: row.o_vid,
@@ -1519,12 +1524,13 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 multi.zadd("plan-orders", updated_at, oid);
                 multi.zadd("orders", updated_at, oid);
                 multi.zadd("orders-" + order["vehicle"]["user_id"], updated_at, oid);
-                multi.zadd("newOrders", updated_at, oid);
+                multi.zadd("new-orders-id", updated_at, oid);
                 multi.hset("orderNo-id", order_no, oid);
                 multi.hset("order-vid-" + vid, qid, oid);
                 multi.hset("orderid-vid", oid, vid);
                 multi.hset("order-entities", oid, JSON.stringify(order));
                 multi.zadd("plan-orders", updated_at, oid);
+                multi.hset("VIN-orderID", order["vehicle"]["vin_code"], oid);
               }
               multi.exec((err: Error, _: any[]) => {
                 if (err) {

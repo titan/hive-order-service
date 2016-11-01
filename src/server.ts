@@ -383,7 +383,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
 // 下第三方订单
 svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid: string, qid: string, items: any, summary: number, payment: number) => {
   log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d", vid, pid, qid, summary, payment);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
+    log.info("arg not match" + errors);
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -765,6 +766,79 @@ svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
     code: 200,
     msg: "Okay"
   });
+});
+
+//判断一个VIN码是否有订单 ValidOrder
+svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) => {
+  log.info("ValidOrder");
+  ctx.cache.hget("VIN-orderID", VIN, function (err, result) {
+    if (err) {
+      log.info(err);
+      rep({
+        code: 500,
+        msg: err.message
+      });
+    } else if (result) {
+      ctx.cache.hget("order-entities", result, (err2, result2) => {
+        if (err2) {
+          log.info(err2);
+          rep({
+            code: 500,
+            msg: err2.message
+          });
+        } else if (result2) {
+          let order = JSON.parse(result2);
+          let user_id = order["vehicle"]["user_id"];
+          if (ctx.uid === user_id) {
+            let state_code = order["state_code"];
+            let state = order["state"];
+            switch (state_code){
+              case 1:
+                state = "该车有尚未支付订单，请处理后再获取报价。";
+                break;
+              case 2:
+                state = "该车有计划待生效订单，若要重新获取报价，请取消该订单。";
+                break;
+              case 3:
+                state = "该车尚在核保，暂时不可以报价。";
+                break;
+              case 4:
+                state = "该车存在生效订单，暂时不可以报价。";
+                break;
+              default:
+                state = "该车存在失效订单，可以继续报价。";
+            }
+            if(state_code === 4){
+              let date = new Date();
+              if((order["stop_at"].getTime() - date.getTime()) < 7776000000){
+                state_code = 8;
+                state = "该车距计划到期时间超过3个月，请在到期前3个月内获取报价。";
+              }
+            }
+            rep({
+              code: 200,
+              data: { state: state_code, msg: state }
+            });
+          } else {
+            rep({
+              code: 200,
+              data: { state: 10, msg: "该车已通过其他微信号生成订单,如非本人操作，请及时联系客服。" }
+            });
+          }
+        } else {
+          rep({
+            code: 200,
+            data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
+          });
+        }
+      })
+    } else {
+      rep({
+        code: 200,
+        data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
+      });
+    }
+  })
 });
 
 log.info("Start service at " + config.svraddr);
