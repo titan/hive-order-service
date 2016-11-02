@@ -265,9 +265,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         }
       });
     });
-
-    let ps = [pbegin, porder]
-
+    let ps = [pbegin, porder];
     for (const pid of Object.keys(plans)) {
       const porderex = new Promise<void>((resolve, reject) => {
         db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at, vehicle_real_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at, v_value], (err: Error, result: ResultSet) => {
@@ -334,7 +332,7 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
         msg: err.message
       }));
       done();
-    } else if (result === null) {
+    } else if (result === null || result === "") {
       cache.setex(cbflag, 30, JSON.stringify({
         code: 404,
         msg: "Order id not found"
@@ -342,42 +340,53 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
       done();
     } else {
       let order_id = result;
-      cache.hget("order-entities", order_id, function (err1, result1) {
-        if (err1) {
-          log.info(err1 + "get order_entities err or order_entities not found");
+      db.query("UPDATE orders SET no = $1, WHERE id = $2", [new_order_no, order_id], (err: Error, result: ResultSet) => {
+        if (err) {
+          log.info(err);
           cache.setex(cbflag, 30, JSON.stringify({
             code: 500,
-            msg: err1.message
-          }));
-          done();
-        } else if (result1 == null) {
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 404,
-            msg: "Order not found"
+            msg: err.message
           }));
           done();
         } else {
-          let order_entities = JSON.parse(result1);
-          order_entities["id"] = new_order_no;
-          let multi = cache.multi();
-          multi.hdel("orderNo-id", order_no);
-          multi.hset("orderNo-id", new_order_no, order_id);
-          multi.hset("order-entities", order_id, JSON.stringify(order_entities));
-          multi.exec((err2, result2) => {
-            if (err2) {
-              log.error(err2, "query redis error");
+          cache.hget("order-entities", order_id, function (err1, result1) {
+            if (err1) {
+              log.info(err1 + "get order_entities err or order_entities not found");
               cache.setex(cbflag, 30, JSON.stringify({
                 code: 500,
-                msg: err2.message
+                msg: err1.message
               }));
-            } else {
-              log.info("updateOrderNo done");
+              done();
+            } else if (result1 == null) {
               cache.setex(cbflag, 30, JSON.stringify({
-                code: 200,
-                data: new_order_no
+                code: 404,
+                msg: "Order not found"
               }));
+              done();
+            } else {
+              let order_entities = JSON.parse(result1);
+              order_entities["id"] = new_order_no;
+              let multi = cache.multi();
+              multi.hdel("orderNo-id", order_no);
+              multi.hset("orderNo-id", new_order_no, order_id);
+              multi.hset("order-entities", order_id, JSON.stringify(order_entities));
+              multi.exec((err2, result2) => {
+                if (err2) {
+                  log.error(err2, "query redis error");
+                  cache.setex(cbflag, 30, JSON.stringify({
+                    code: 500,
+                    msg: err2.message
+                  }));
+                } else {
+                  log.info("updateOrderNo done");
+                  cache.setex(cbflag, 30, JSON.stringify({
+                    code: 200,
+                    data: new_order_no
+                  }));
+                }
+                done();
+              });
             }
-            done();
           });
         }
       });
@@ -1329,7 +1338,7 @@ function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, ui
               dids: [row.e_pid],
               created_at: row.o_created_at,
               updated_at: row.o_created_at
-            }
+            };
             orders[row.o_id] = order;
           }
         }
@@ -1449,7 +1458,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               }],
               created_at: row.o_created_at,
               updated_at: row.o_updated_at
-            }
+            };
             orders[row.o_id] = order;
           }
         }
@@ -1593,7 +1602,7 @@ function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               }],
               created_at: row.o_created_at,
               updated_at: row.o_updated_at
-            }
+            };
             orders[row.o_id] = order;
           }
         }

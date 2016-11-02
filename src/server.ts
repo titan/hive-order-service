@@ -134,8 +134,8 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
       log.info(err);
       rep({ code: 500, msg: err.message });
     }
-    else if (result != null && result != '') {
-      log.info("[" + result + "]---------")
+    else if (result !== null && result !== "") {
+      // log.info("[" + result + "]---------");
       let multi = ctx.cache.multi();
       for (let order_key of result) {
         multi.hget(order_entities, order_key);
@@ -286,7 +286,7 @@ svc.call("updateOrderState", permissions, (ctx: Context, rep: ResponseFunction, 
 
 // 更新订单编号
 svc.call("updateOrderNo", permissions, (ctx: Context, rep: ResponseFunction, order_no: string) => {
-  log.info(" updateOrderNo", ctx);
+  log.info(" updateOrderNo", order_no);
   if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
     rep({
       code: 400,
@@ -767,7 +767,7 @@ svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
   });
 });
 
-//判断一个VIN码是否有订单 ValidOrder
+// 判断一个VIN码是否有订单 ValidOrder
 svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) => {
   log.info("ValidOrder");
   ctx.cache.hget("VIN-orderID", VIN, function (err, result) {
@@ -791,7 +791,7 @@ svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) =
           if (ctx.uid === user_id) {
             let state_code = order["state_code"];
             let state = order["state"];
-            switch (state_code){
+            switch (state_code) {
               case 1:
                 state = "该车有尚未支付订单，请处理后再获取报价。";
                 break;
@@ -807,9 +807,9 @@ svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) =
               default:
                 state = "该车存在失效订单，可以继续报价。";
             }
-            if(state_code === 4){
+            if (state_code === 4) {
               let date = new Date();
-              if((order["stop_at"].getTime() - date.getTime()) < 7776000000){
+              if ((order["stop_at"].getTime() - date.getTime()) < 7776000000) {
                 state_code = 8;
                 state = "该车距计划到期时间超过3个月，请在到期前3个月内获取报价。";
               }
@@ -830,14 +830,14 @@ svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) =
             data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
           });
         }
-      })
+      });
     } else {
       rep({
         code: 200,
         data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
       });
     }
-  })
+  });
 });
 
 log.info("Start service at " + config.svraddr);

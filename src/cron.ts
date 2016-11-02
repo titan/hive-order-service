@@ -7,8 +7,8 @@ import { servermap, triggermap } from "hive-hostmap";
 import * as schedule from "node-schedule";
 import { verify, uuidVerifier, stringVerifier, arrayVerifier, objectVerifier, booleanVerifier } from "hive-verify";
 import { createClient, RedisClient } from "redis";
-const pg = require('pg');
-const ResultSet = require('pg');
+const pg = require("pg");
+const ResultSet = require("pg");
 
 
 
@@ -33,11 +33,11 @@ let log = bunyan.createLogger({
 });
 let redis = createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"]);
 let config = {
-  user: process.env["DB_USER"], //env var: PGUSER
+  user: process.env["DB_USER"], // env var: PGUSER
   host: process.env["DB_HOST"],
-  database: process.env["DB_NAME"], //env var: PGDATABASE
-  password: process.env["DB_PASSWORD"], //env var: PGPASSWORD
-  port: process.env["DB_PORT"], //env var: PGPORT
+  database: process.env["DB_NAME"], // env var: PGDATABASE
+  password: process.env["DB_PASSWORD"], // env var: PGPASSWORD
+  port: process.env["DB_PORT"], // env var: PGPORT
   max: 10, // max number of clients in the pool
   idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
 };
@@ -82,11 +82,11 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
         redis.hget("vid-gid", vid, function (err, result) {
           if (err) {
             log.info(`this ${vid} err to get gid`);
-          } else if (result == "" || result === null) {
+          } else if (result === "" || result === null) {
             log.info(`not found gid ,this vid is ${vid}`);
           } else {
             redis.hget("group-entities", result, function (err1, result1) {
-              if (err || result1 == "") {
+              if (err || result1 === "") {
                 log.info(`use this gid is ${result} to get group-entities err`);
               } else {
                 let group_entities = JSON.parse(result1);
@@ -128,7 +128,7 @@ function update_order_recursive(db, done, nowdate, oids, acc, cb) {
           if (err) {
             log.info(`get order_entities for this oid = ${oid} err`);
             done();
-          } else if (result == "" || result === null) {
+          } else if (result === "" || result === null) {
             log.info(`not found order_entities to this ${oid}`);
             done();
           } else {
@@ -238,7 +238,7 @@ function orderEffective() {
                 summary: row.summary,
                 payment: row.payment,
                 start_at: row.start_at,
-              }
+              };
               orders.push(order);
             }
             const effectiveOrders = [];
@@ -292,7 +292,7 @@ function orderInvalid() {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
-          } else if (result === null || result == "") {
+          } else if (result === null || result === "") {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
@@ -305,7 +305,7 @@ function orderInvalid() {
                 vid: row.vid,
                 state_code: row.state_code,
                 created_at: row.created_at,
-              }
+              };
               orders.push(order);
             }
             let invalidOrders = orders.filter(o => checkInvalidTime(o["created_at"]) === true).map(o => o);
@@ -334,8 +334,7 @@ function orderInvalid() {
                   done();
                 }
               });
-            }
-            )
+            });
           };
         });
       }
