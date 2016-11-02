@@ -226,7 +226,6 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let args = [domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback];
   log.info("placeplanorder %j", args);
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnPlanOrder", args: args }));
-  rep({ code: 200, data: order_id });
   wait_for_response(ctx.cache, callback, rep);
 });
 // 下司机单

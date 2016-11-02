@@ -110,7 +110,7 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
 }
 
 
-function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
+function update_order_recursive(db, done, nowdate, oids, acc, cb) {
   if (oids.length === 0) {
     cb(acc);
     done();
@@ -132,12 +132,22 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
             log.info(`not found order_entities to this ${oid}`);
             done();
           } else {
-            order_entities = JSON.parse(result);
-            order_entities["state"] = "已生效";
-            order_entities["state_code"] = 4;
-            let order = { oid: oid, order: order_entities };
-            acc.push(order);
-            update_order_recursive(db, done, redis, nowdate, oids, acc, cb);
+            let p = rpc("admin", servermap["plan"], null, "increaseJoinedCount", "00000000-0000-0000-0000-000000000001");
+            p.then((p) => {
+              if (err || p.code !== 200) {
+                log.info(`call plan error for this ${oid}`);
+                oids.push(oid);
+                update_order_recursive(db, done, nowdate, oids, acc, cb);
+                done();
+              } else {
+                order_entities = JSON.parse(result);
+                order_entities["state"] = "已生效";
+                order_entities["state_code"] = 4;
+                let order = { oid: oid, order: order_entities };
+                acc.push(order);
+                update_order_recursive(db, done, nowdate, oids, acc, cb);
+              }
+            });
           }
         });
       }
@@ -172,11 +182,6 @@ function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
     });
   }
 }
-
-// function queryselect() {
-
-// }
-
 
 
 let rule = new schedule.RecurrenceRule();
@@ -247,7 +252,7 @@ function orderEffective() {
               vids.push(efo["vid"]);
             }
             let nowdate = new Date();
-            update_order_recursive(db, done, redis, nowdate, oids.map(oid => oid), [], (order_entities) => {
+            update_order_recursive(db, done, nowdate, oids.map(oid => oid), [], (order_entities) => {
               // update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
               let multi = redis.multi();
               for (let order_entitie of order_entities) {
@@ -287,7 +292,7 @@ function orderInvalid() {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
-          } else if (result === null) {
+          } else if (result === null || result == "") {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
