@@ -554,7 +554,8 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
   let type1 = 1;
   let balance: number = null;
   let start_at = null;
-  db.query("UPDATE orders SET state_code = $1, state = $2 WHERE id = $3", [state_code, state, order_id], (err: Error, result: ResultSet) => {
+  let paid_at = new Date();
+  db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id], (err: Error, result: ResultSet) => {
     if (err) {
       log.info(err);
       cache.setex(cbflag, 30, JSON.stringify({
@@ -589,6 +590,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
           async_serial_ignore(ps, [], (_) => {
             order["state_code"] = state_code;
             order["state"] = state;
+            order["paid_at"] = paid_at;
             let updated_at = new Date().getTime();
             let multi = cache.multi();
             multi.hset("order-entities", order_id, JSON.stringify(order));
@@ -1411,7 +1413,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string): 
 
 function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         log.info("==================" + err);
         reject(err);
@@ -1457,7 +1459,8 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 price: row.oi_price
               }],
               created_at: row.o_created_at,
-              updated_at: row.o_updated_at
+              updated_at: row.o_updated_at,
+              paid_at: row.o_paid_at
             };
             orders[row.o_id] = order;
           }
@@ -1526,7 +1529,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               for (const oid of oids) {
                 const order = orders[oid];
                 delete order["pids"];
-                const order_no = order["no"];
+                const order_no = order["id"];
                 const vid = order["vid"];
                 const qid = order["qid"];
                 const updated_at = order["updated_at"].getTime();
