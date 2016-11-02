@@ -7,8 +7,8 @@ import { servermap, triggermap } from "hive-hostmap";
 import * as schedule from "node-schedule";
 import { verify, uuidVerifier, stringVerifier, arrayVerifier, objectVerifier, booleanVerifier } from "hive-verify";
 import { createClient, RedisClient } from "redis";
-const pg = require('pg');
-const ResultSet = require('pg');
+const pg = require("pg");
+const ResultSet = require("pg");
 
 
 
@@ -31,13 +31,13 @@ let log = bunyan.createLogger({
     }
   ]
 });
-let redis = createClient(6379, process.env["CACHE_HOST"]);
+let redis = createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"]);
 let config = {
-  user: process.env["DB_USER"], //env var: PGUSER
+  user: process.env["DB_USER"], // env var: PGUSER
   host: process.env["DB_HOST"],
-  database: process.env["DB_NAME"], //env var: PGDATABASE
-  password: process.env["DB_PASSWORD"], //env var: PGPASSWORD
-  port: process.env["DB_PORT"], //env var: PGPORT
+  database: process.env["DB_NAME"], // env var: PGDATABASE
+  password: process.env["DB_PASSWORD"], // env var: PGPASSWORD
+  port: process.env["DB_PORT"], // env var: PGPORT
   max: 10, // max number of clients in the pool
   idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
 };
@@ -82,11 +82,11 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
         redis.hget("vid-gid", vid, function (err, result) {
           if (err) {
             log.info(`this ${vid} err to get gid`);
-          } else if (result == "" || result === null) {
+          } else if (result === "" || result === null) {
             log.info(`not found gid ,this vid is ${vid}`);
           } else {
             redis.hget("group-entities", result, function (err1, result1) {
-              if (err || result1 == "") {
+              if (err || result1 === "") {
                 log.info(`use this gid is ${result} to get group-entities err`);
               } else {
                 let group_entities = JSON.parse(result1);
@@ -110,7 +110,7 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
 }
 
 
-function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
+function update_order_recursive(db, done, nowdate, oids, acc, cb) {
   if (oids.length === 0) {
     cb(acc);
     done();
@@ -128,25 +128,35 @@ function update_order_recursive(db, done, redis, nowdate, oids, acc, cb) {
           if (err) {
             log.info(`get order_entities for this oid = ${oid} err`);
             done();
-          } else if (result == "" || result === null) {
+          } else if (result === "" || result === null) {
             log.info(`not found order_entities to this ${oid}`);
             done();
           } else {
-            order_entities = JSON.parse(result);
-            order_entities["state"] = "已生效";
-            order_entities["state_code"] = 4;
-            let order = { oid: oid, order: order_entities };
-            acc.push(order);
-            update_order_recursive(db, done, redis, nowdate, oids, acc, cb);
+            let p = rpc("admin", servermap["plan"], null, "increaseJoinedCount", "00000000-0000-0000-0000-000000000001");
+            p.then((p) => {
+              if (err || p.code !== 200) {
+                log.info(`call plan error for this ${oid}`);
+                oids.push(oid);
+                update_order_recursive(db, done, nowdate, oids, acc, cb);
+                done();
+              } else {
+                order_entities = JSON.parse(result);
+                order_entities["state"] = "已生效";
+                order_entities["state_code"] = 4;
+                let order = { oid: oid, order: order_entities };
+                acc.push(order);
+                update_order_recursive(db, done, nowdate, oids, acc, cb);
+              }
+            });
           }
         });
       }
     });
   }
 }
-function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
+function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
   if (orders.length === 0) {
-    cb(acc);
+    cb(acc, failings);
     done();
   } else {
     let order = orders.shift();
@@ -162,7 +172,10 @@ function get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb) {
             let vehicle = v["data"];
             order["uid"] = vehicle["user_id"];
             acc.push(order);
-            get_order_uid_recursive(db, done, redis, nowdate, orders, acc, cb);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
+          } else {
+            failings.push(order["id"]);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
           }
         });
       }
@@ -189,8 +202,10 @@ rule1.second = 0;
 let timing1 = schedule.scheduleJob(rule1, function () {
   const pdo = orderInvalid();
   let ps = [pdo];
-  async_serial_ignore<void>(ps, [], () => {
-    log.info("refresh done!");
+  async_serial_ignore<void>(ps, [], (failorders) => {
+    let nowdate = new Date();
+    redis.hset("cron-failorders", nowdate, failorders);
+    log.info(`refresh done! and the error orders is ${failorders}`);
   });
 });
 
@@ -203,7 +218,7 @@ function orderEffective() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3 ", [], (err, result) => {
+        db.query("SELECT id, no, vid, type, state_code, state, summary, payment, start_at FROM orders WHERE state_code = 3 AND type = 0 ", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
@@ -223,7 +238,7 @@ function orderEffective() {
                 summary: row.summary,
                 payment: row.payment,
                 start_at: row.start_at,
-              }
+              };
               orders.push(order);
             }
             const effectiveOrders = [];
@@ -237,29 +252,29 @@ function orderEffective() {
               vids.push(efo["vid"]);
             }
             let nowdate = new Date();
-            update_order_recursive(db, done, redis, nowdate, oids.map(oid => oid), [], (order_entities) => {
-              update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
-                let multi = redis.multi();
-                for (let order_entitie of order_entities) {
-                  for (let group_entitie of group_entities) {
-                    multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
-                    multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
-                  }
+            update_order_recursive(db, done, nowdate, oids.map(oid => oid), [], (order_entities) => {
+              // update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
+              let multi = redis.multi();
+              for (let order_entitie of order_entities) {
+                // for (let group_entitie of group_entities) {
+                multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
+                // multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
+                // }
+              }
+              multi.exec((err, replise) => {
+                if (err) {
+                  log.info(err);
+                  reject(err);
+                  done();
                 }
-                multi.exec((err, replise) => {
-                  if (err) {
-                    log.info(err);
-                    reject(err);
-                    done();
-                  }
-                  else {
-                    log.info("all exec success  and  done");
-                    resolve();
-                    done();
-                  }
-                });
+                else {
+                  log.info("all exec success  and  done");
+                  resolve();
+                  done();
+                }
               });
             });
+            // });
           }
         });
       }
@@ -273,11 +288,11 @@ function orderInvalid() {
       if (err) {
         log.info("error fetching client from pool" + err);
       } else {
-        db.query("SELECT id, no, vid, state_code, state, created_at FROM orders WHERE state_code = 0", [], (err, result) => {
+        db.query("SELECT id, no, vid, state_code, state, created_at FROM orders WHERE state_code = 1 AND type = 0", [], (err, result) => {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
-          } else if (result === null) {
+          } else if (result === null || result === "") {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
@@ -290,7 +305,7 @@ function orderInvalid() {
                 vid: row.vid,
                 state_code: row.state_code,
                 created_at: row.created_at,
-              }
+              };
               orders.push(order);
             }
             let invalidOrders = orders.filter(o => checkInvalidTime(o["created_at"]) === true).map(o => o);
@@ -299,15 +314,14 @@ function orderInvalid() {
               invalidOrder["state_code"] = 5;
             }
             let nowdate = new Date();
-            get_order_uid_recursive(db, done, redis, nowdate, invalidOrders.map(order => order), [], (orders) => {
+            get_order_uid_recursive(db, done, nowdate, invalidOrders.map(invalidOrder => invalidOrder), [], [], (delorders, failorders) => {
               let multi = redis.multi();
-              for (let order of orders) {
-                multi.hdel("order_entitie", order["id"]);
-                multi.hdel("orderid-vid", order["id"]);
-                multi.zrem("orders", order["id"]);
-                multi.zrem(`orders-${order["uid"]}`, order["id"]);
-                multi.hdel("orderNo-id", order["no"]);
-                multi.zrem("plan-orders", order["id"]);
+              for (let delorder of delorders) {
+                multi.hdel("order_entitie", delorder["id"]);
+                multi.hdel("orderid-vid", delorder["id"]);
+                multi.zrem("orders", delorder["id"]);
+                multi.zrem(`orders-${delorder["uid"]}`, delorder["id"]);
+                multi.zrem("plan-orders", delorder["id"]);
               }
               multi.exec((err, result) => {
                 if (err) {
@@ -316,12 +330,11 @@ function orderInvalid() {
                   done();
                 } else {
                   log.info("all exec success  and  done");
-                  resolve();
+                  resolve(failorders);
                   done();
                 }
               });
-            }
-            )
+            });
           };
         });
       }
