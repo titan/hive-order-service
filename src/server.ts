@@ -59,9 +59,77 @@ function formatNum(Source: string, Length: number): string {
   return strTemp + Source;
 }
 
+function checkArgs(arg, sarg) {
+  if (sarg === null || sarg === undefined || sarg === '') {
+    return true;
+  } else {
+    if (arg === sarg) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+}
+
+function checkDate(datetime) {
+  if (datetime === null || datetime == undefined || datetime === '') {
+    return false;
+  } else {
+    return true;
+  }
+}
+
+function filterDate(created_at, begintime, endtime) {
+  let arg = (new Date(created_at)).getTime();
+  if (checkDate(begintime) && checkDate(endtime)) {
+    let sbegintime = begintime.getTime();
+    let sendtime = endtime.getTime();
+    if (arg >= sbegintime && arg <= sendtime) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (checkDate(begintime)) {
+    let sbegintime = begintime.getTime();
+    if (arg >= sbegintime) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (checkDate(endtime)) {
+    let sendtime = endtime.getTime();
+    if (arg <= sendtime) {
+      return true;
+    } else {
+      return false;
+    }
+  } else {
+    return true;
+  }
+}
+function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb) {
+  cache.hget(order_entities, key, function (err, result) {
+    let order = JSON.parse(result);
+    if (order["vehicle"]) {
+      if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
+        if (checkArgs(order["order_id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
+          acc.push(order);
+        }
+      }
+    }
+    if (acc.length === len || cursor === keys.length - 1) {
+      cb(acc, cursor);
+    } else {
+      cursor++;
+      key = keys[cursor];
+      order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb);
+    }
+  });
+}
+
 // 获取所有订单
-svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number) => {
-  log.info("getallorder");
+svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number, maxScore: number, nowScore: number, sorder_id: string, sownername: string, sphone: string, slicense_no: string, sbegintime: string, sendtime: string, sstate: string) => {
+  log.info("getallorders");
   if (!verify([numberVerifier("start", start), numberVerifier("limit", limit)], (errors: string[]) => {
     rep({
       code: 400,
@@ -70,27 +138,28 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
   })) {
     return;
   }
-  ctx.cache.zrevrange(order_key, start, limit, function (err, result) {
+  ctx.cache.zrevrangebyscore(order_key, maxScore, 0, function (err, result) {
     if (err) {
       rep({ code: 500, msg: err.message });
-    } else {
-      ctx.cache.zcount("plan-orders", "-inf", "+inf", function (err1, result1) {
-        if (err1) {
-          log.info("zcount planorders err" + err1);
-        } else {
-          let multi = ctx.cache.multi();
-          for (let id of result) {
-            multi.hget(order_entities, id);
+    } else if (result) {
+      let cursor = start;
+      let len = limit - start + 1;
+      if (result.length - 1 < limit) {
+        len = result.length;
+      }
+      order_filter_recursive(ctx.cache, order_key, result[cursor], result, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, [], (orders, cursor) => {
+        ctx.cache.zrevrangebyscore(order_key, nowScore, maxScore, function (err2, result3) {
+          if (err2) {
+            rep({ code: 500, msg: err2.message });
+          } else if (result3) {
+            rep({ code: 200, data: orders, len: result.length, newOrder: result3.length, cursor: cursor });
+          } else {
+            rep({ code: 200, data: orders, len: result.length, newOrder: 0 });
           }
-          multi.exec((err, result2) => {
-            if (err) {
-              rep({ code: 500, msg: err.message });
-            } else {
-              rep({ code: 200, data: result2.map(e => JSON.parse(e)), length: result1 });
-            }
-          });
-        }
+        });
       });
+    } else {
+      rep({ code: 404, msg: "Not found order" });
     }
   });
 });
