@@ -371,9 +371,15 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       log.info("not found planorder for this vid");
       rep({ code: 404, msg: "not found" });
     } else {
-      log.info("replies==========" + result);
-      rep({ code: 200, data: result.map(e => JSON.parse(e)) });
-      // rep(JSON.parse(result));
+      let multi = ctx.cache.multi();
+      multi.hget(order_entities, result);
+      multi.exec((err1, replies1) => {
+        if (err1) {
+          log.error(err1, "query error");
+        } else {
+          rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
+        }
+      });
     }
   });
 });
