@@ -110,7 +110,7 @@ svc.call("getOrder", permissions, (ctx: Context, rep: ResponseFunction, order_id
     if (err) {
       rep({ code: 500, msg: err });
     } else {
-      let nowDate = (new Date()).getTime();
+      let nowDate = (new Date()).getTime() + 28800000;
       rep({ code: 200, data: JSON.parse(result), nowDate: nowDate });
     }
   });
@@ -145,7 +145,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
           log.error(err2, "query error");
         } else {
           // log.info("replies==========" + replies);
-          let nowDate = (new Date()).getTime();
+          let nowDate = (new Date()).getTime() + 28800000;
           rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
         }
       });
@@ -380,8 +380,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
 
 
 // 下第三方订单
-svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid: string, qid: string, items: any, summary: number, payment: number) => {
-  log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d", vid, pid, qid, summary, payment);
+svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, pid: string, qid: string, items: any, summary: number, payment: number, opr_level: number) => {
+  log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d, opr_level: %d", vid, pid, qid, summary, payment, opr_level);
   if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
     log.info("arg not match" + errors);
     rep({
@@ -395,7 +395,7 @@ svc.call("placeAnSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, 
   let order_id = uuid.v1();
   let callback = order_id;
   let domain = ctx.domain;
-  let args = [uid, domain, order_id, vid, pid, qid, items, summary, payment, callback];
+  let args = [uid, domain, order_id, vid, pid, qid, items, summary, payment, opr_level, callback];
   ctx.msgqueue.send(msgpack.encode({ cmd: "placeAnSaleOrder", args: args }));
   wait_for_response(ctx.cache, callback, rep);
 });

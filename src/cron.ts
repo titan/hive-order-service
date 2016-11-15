@@ -65,6 +65,24 @@ function checkInvalidTime(created_at) {
   }
 }
 
+function trim(str: string) {
+  if (str) {
+    return str.trim();
+  } else {
+    return null;
+  }
+}
+
+function proportion(len: number) {
+  let basis: number = 20;
+  let result: number = null;
+  for (let i = 0; i < len - 1; i++) {
+    result += 5;
+  }
+  return ((basis + result) / 100);
+}
+
+
 
 function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb) {
   if (vids.length === 0) {
@@ -183,7 +201,7 @@ function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
   }
 }
 
-
+//-----订单生效------
 let rule = new schedule.RecurrenceRule();
 rule.hour = 0;
 rule.minute = 1;
@@ -195,11 +213,28 @@ let timing = schedule.scheduleJob(rule, function () {
     log.info("refresh done!");
   });
 });
+
+//-----订单失效------
 let rule1 = new schedule.RecurrenceRule();
 rule1.hour = 0;
-rule1.minute = 11;
+rule1.minute = 3;
 rule1.second = 0;
 let timing1 = schedule.scheduleJob(rule1, function () {
+  const pdo = orderInvalid();
+  let ps = [pdo];
+  async_serial_ignore<void>(ps, [], (failorders) => {
+    let nowdate = new Date();
+    redis.hset("cron-failorders", nowdate, failorders);
+    log.info(`refresh done! and the error orders is ${failorders}`);
+  });
+});
+
+//------互助组每日比例变化
+let rule2 = new schedule.RecurrenceRule();
+rule1.hour = 0;
+rule1.minute = 5;
+rule1.second = 0;
+let timing2 = schedule.scheduleJob(rule2, function () {
   const pdo = orderInvalid();
   let ps = [pdo];
   async_serial_ignore<void>(ps, [], (failorders) => {
@@ -317,7 +352,7 @@ function orderInvalid() {
             get_order_uid_recursive(db, done, nowdate, invalidOrders.map(invalidOrder => invalidOrder), [], [], (delorders, failorders) => {
               let multi = redis.multi();
               for (let delorder of delorders) {
-                multi.hdel("order_entitie", delorder["id"]);
+                multi.hdel("order-entities", delorder["id"]);
                 multi.hdel("orderid-vid", delorder["id"]);
                 multi.zrem("orders", delorder["id"]);
                 multi.zrem(`orders-${delorder["uid"]}`, delorder["id"]);
@@ -341,5 +376,46 @@ function orderInvalid() {
     });
   });
 }
+
+function updateGroupScale() {
+  return new Promise<void>((resolve, reject) => {
+    pool.connect(function (err, db, done) {
+      if (err) {
+        log.info("error fetching client from pool" + err);
+      } else {
+        db.query("SELECT g.id AS g_id, g.name AS g_name, g.founder AS g_founder , g.apportion AS g_apportion, gv.id AS gv_id, gv.gid AS gv_gid, gv.vid AS gv_vid, gv.type AS gv_type FROM groups AS g LEFT JOIN group_vehicles AS gv ON g.id = gv.gid WHERE g.deleted = false AND gv.type = 1", [], (err, result) => {
+          if (err) {
+            reject(err);
+            log.info("SELECT group error");
+          } else {
+            const groups: Object = {};
+            for (const row of result.rows) {
+              if (groups.hasOwnProperty(row.g_id)) {
+                groups[row.g_id]["vids"].push(row.gv_vid);
+              } else {
+                const group = {
+                  id: row.g_id,
+                  name: row.g_name,
+                  founder: row.g_founder,
+                  apportion: row.g_apportion,
+                  vids: []
+                };
+                groups[row.g_id] = group;
+              }
+            }
+            const gids = Object.keys(groups);
+            for (let gid of gids) {
+              let len = groups["gid"];
+              groups["gid"]["apportion"] = proportion(len);
+            }
+            
+          }
+        });
+      }
+    });
+  });
+}
+
+
 
 log.info("Start timing-cron");
