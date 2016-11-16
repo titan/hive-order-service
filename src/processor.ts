@@ -78,13 +78,13 @@ function insert_sale_order_items_recursive(db, done, order_id, pid, items, piids
   }
 }
 
-function update_sale_order_items_recursive(db, done, prices, piids, acc, cb) {
+function update_sale_order_items_recursive(db, done, prices, piids, order_id, acc, cb) {
   if (piids.length === 0) {
     cb(acc);
   } else {
     let piid = piids.shift();
     let price = prices.shift();
-    db.query("UPDATE order_items SET price = $1 WHERE id = $2", [price, piid], (err: Error, result: ResultSet) => {
+    db.query("UPDATE order_items SET price = $1 WHERE piid = $2 AND oid = $3", [price, piid, order_id], (err: Error, result: ResultSet) => {
       if (err) {
         log.info(err);
         db.query("ROLLBACK", [], (err: Error) => {
@@ -92,12 +92,11 @@ function update_sale_order_items_recursive(db, done, prices, piids, acc, cb) {
           done();
         });
       } else {
-        update_sale_order_items_recursive(db, done, prices, piids, acc, cb);
+        update_sale_order_items_recursive(db, done, prices, piids, order_id, acc, cb);
       }
     });
   }
 }
-
 function insert_order_item_recursive(db, done, plans, pid, args1, piids, acc, cb) {
   if (piids.length === 0) {
     cb(acc);
@@ -621,8 +620,8 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
 });
 
 // let args = {uid,vid,items,summary,payment};{piid: price}
-processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string, cbflag: string) => {
-  log.info("placeAnOrder");
+processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: any, summary: string, payment: string, opr_level: number, cbflag: string) => {
+  log.info("placeAnSaleOrder");
   let item_id = uuid.v1();
   let event_id = uuid.v1();
   let state_code = 1;
@@ -665,7 +664,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                 done();
               });
             } else {
-              db.query("INSERT INTO sale_order_ext(oid,pid,qid) VALUES($1, $2, $3)", [order_id, pid, qid], (err: Error, result: ResultSet) => {
+              db.query("INSERT INTO sale_order_ext(oid, pid, qid, opr_level) VALUES($1, $2, $3, $4)", [order_id, pid, qid, opr_level], (err: Error, result: ResultSet) => {
                 if (err) {
                   db.query("ROLLBACK", [], (err1: Error) => {
                     log.error(err, "insert into sale_order_ext error");
@@ -699,9 +698,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                           prices.push(items[item]);
                         }
                         let items1 = [];
-                        log.info("piids=============" + piids + "prices=========" + prices + "plan_items========================" + plan_items);
                         let len = Math.min(piids.length, prices.length, plan_items.length);
-                        log.info("=====length" + len);
                         for (let i = 0; i < len; i++) {
                           let item_id = piids.shift();
                           let price = prices.shift();
@@ -713,7 +710,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                         let start_at = null;
                         let stop_at = null;
                         let order = {
-                          summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, start_at: start_at, stop_at: stop_at
+                          summary: summary, state: state, payment: payment, plan: plan, items: items1, state_code: state_code, id: order_id, type: type, vehicle: vehicle, created_at: created_at1, updated_at: created_at1, start_at: start_at, stop_at: stop_at, opr_level: opr_level
                         };
                         let multi = cache.multi();
                         multi.zadd("sale-orders", created_at, order_id);
@@ -758,8 +755,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
 
 processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: any, order_id: string, items: any, summary: number, payment: number, cbflag: string) => {
   log.info("UpdateSaleOrder");
-  // orderNo-id
-  let update_at = new Date;
+  let update_at = new Date();
   let piids: Object[] = [];
   let prices: Object[] = [];
   for (let item in items) {
@@ -786,7 +782,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
           done();
         }
         else {
-          update_sale_order_items_recursive(db, done, prices.map(price => price), piids.map(piid => piid), {}, () => {
+          update_sale_order_items_recursive(db, done, prices.map(price => price), piids.map(piid => piid), order_id, {}, () => {
             cache.hget("order-entities", order_id, function (err, result) {
               if (err) {
                 log.info("err,get redis error");
@@ -796,15 +792,19 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
                 }));
                 done();
               } else {
-                log.info("================" + result);
+                log.info(result);
                 let order_entities = JSON.parse(result);
                 order_entities["payment"] = payment;
                 order_entities["summary"] = summary;
+                order_entities["updated_at"] = update_at;
                 for (let piid in items) {
-                  if (order_entities["items"]["item_id"] === piid) {
-                    order_entities["items"]["price"] = items["piid"];
+                  for (let item of order_entities["items"]) {
+                    if (item["item_id"] === piid) {
+                      item["price"] = items[piid];
+                    }
                   }
                 }
+                log.info(JSON.stringify(order_entities));
                 let multi = cache.multi();
                 multi.hset("order-entities", order_id, JSON.stringify(order_entities));
                 multi.exec((err, result1) => {
@@ -832,6 +832,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
     }
   });
 });
+
 // 生成核保
 processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFunction, uwid: string, oid: string, plan_time: any, validate_place: string, validate_update_time: any, callback: string, domain: any) => {
   log.info("createUnderwrite ");
@@ -1533,6 +1534,7 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 const vid = order["vid"];
                 const qid = order["qid"];
                 const updated_at = order["updated_at"].getTime();
+                multi.hset("vid-poid", vid, oid);
                 multi.zadd("plan-orders", updated_at, oid);
                 multi.zadd("orders", updated_at, oid);
                 multi.zadd("orders-" + order["vehicle"]["user_id"], updated_at, oid);
@@ -1565,7 +1567,7 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string): 
 
 function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+    db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
       if (err) {
         reject(err);
       } else {
@@ -1593,6 +1595,7 @@ function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid:
               vid: row.o_vid,
               vehicle: null,
               pid: row.e_pid,
+              opr_level: row.e_opr_level,
               plan: null,
               qid: row.e_qid,
               quotation: null,
