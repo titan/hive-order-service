@@ -112,7 +112,7 @@ function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorde
     let order = JSON.parse(result);
     if (order["vehicle"]) {
       if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
-        if (checkArgs(order["order_id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
+        if (checkArgs(order["id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
           acc.push(order);
         }
       }
@@ -152,9 +152,9 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
           if (err2) {
             rep({ code: 500, msg: err2.message });
           } else if (result3) {
-            rep({ code: 200, data: orders, len: result.length, newOrder: result3.length, cursor: cursor });
+            rep({ code: 200, data: orders, len: result.length, newOrders: result3.length, cursor: cursor });
           } else {
-            rep({ code: 200, data: orders, len: result.length, newOrder: 0 });
+            rep({ code: 200, data: orders, len: result.length, newOrders: 0 });
           }
         });
       });

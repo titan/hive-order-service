@@ -1112,13 +1112,12 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       multi.exec((err2, result2) => {
         if (result2) {
           if (underwrite_result.trim() === "通过") {
-            log.info("userid------------" + order["vehicle"]["user_id"]);
+            // log.info("userid------------" + order["vehicle"]["user_id"]);
             cache.hget("wxuser", order["vehicle"]["user_id"], function (err, result3) {
               if (err) {
                 log.info("get wxuser err");
               } else {
                 let openid = result3;
-                log.info("openid------------" + openid);
                 let No = order["vehicle"]["license_no"];
                 let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
                 let name = order["vehicle"]["owner"]["name"];
