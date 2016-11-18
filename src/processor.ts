@@ -339,7 +339,7 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
       done();
     } else {
       let order_id = result;
-      db.query("UPDATE orders SET no = $1, WHERE id = $2", [new_order_no, order_id], (err: Error, result: ResultSet) => {
+      db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, order_id], (err: Error, result: ResultSet) => {
         if (err) {
           log.info(err);
           cache.setex(cbflag, 30, JSON.stringify({

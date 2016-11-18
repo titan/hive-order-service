@@ -411,7 +411,8 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
           log.info("replies==========" + result1);
-          rep({ code: 200, data: JSON.parse(result1) });
+          let nowDate = (new Date()).getTime() + 28800000;
+          rep({ code: 200, data: JSON.parse(result1), nowDate: nowDate });
         } else {
           rep({ code: 404, msg: "Order not found" });
         }
