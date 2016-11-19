@@ -109,11 +109,13 @@ function filterDate(created_at, begintime, endtime) {
 }
 function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb) {
   cache.hget(order_entities, key, function (err, result) {
-    let order = JSON.parse(result);
-    if (order["vehicle"]) {
-      if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
-        if (checkArgs(order["id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
-          acc.push(order);
+    if (result) {
+      let order = JSON.parse(result);
+      if (order && order["vehicle"] && order["vehicle"]["owner"]) {
+        if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
+          if (checkArgs(order["id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
+            acc.push(order);
+          }
         }
       }
     }
@@ -210,10 +212,9 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         multi.hget(order_entities, order_key);
       }
       multi.exec((err2, replies) => {
-        if (err2) {
-          log.error(err2, "query error");
+        if (err2 || replies == null || replies == "") {
+          rep({ code: 404, msg: "not found" });
         } else {
-          // log.info("replies==========" + replies);
           let nowDate = (new Date()).getTime() + 28800000;
           rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
         }
