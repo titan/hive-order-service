@@ -8,6 +8,7 @@ import * as msgpack from "msgpack-lite";
 import * as nanomsg from "nanomsg";
 import * as http from "http";
 import * as queryString from "querystring";
+import {CustomerMessage} from "recommend-library";
 let log = bunyan.createLogger({
   name: "order-processor",
   streams: [
@@ -234,7 +235,8 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     let sum2 = sum + "";
     let sum1 = formatNum(sum2, 3);
     let order_no = "1" + "110" + "001" + sum1 + year + strno;
-
+    let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", uid);
+    let ps = [];
     const pbegin = new Promise<void>((resolve, reject) => {
       db.query("BEGIN", [], (err: Error) => {
         if (err) {
@@ -244,7 +246,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         }
       });
     });
-
+    ps.push(pbegin);
     const porder = new Promise<void>((resolve, reject) => {
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no], (err: Error) => {
         if (err) {
@@ -254,7 +256,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         }
       });
     });
-
+    ps.push(porder);
     const pcommit = new Promise<void>((resolve, reject) => {
       db.query("COMMIT", [], (err: Error) => {
         if (err) {
@@ -264,7 +266,6 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         }
       });
     });
-    let ps = [pbegin, porder];
     for (const pid of Object.keys(plans)) {
       const porderex = new Promise<void>((resolve, reject) => {
         db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at, vehicle_real_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at, v_value], (err: Error, result: ResultSet) => {
@@ -290,25 +291,46 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         ps.push(p);
       }
     }
-
     ps.push(pcommit);
-
-    async_serial<void>(ps, [], () => {
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 200,
-        data: { id: order_id, no: order_no }
-      }));
-      sync_plan_orders(db, cache, domain, uid, order_id).then(() => {
-        log.info("Place an plan order %s", order_id);
-        done();
-      });
-    }, (e: Error) => {
-      db.query("ROLLBACK", [], (err: Error) => {
+    p.then(profile => {
+      if (profile["code"] === 200 && profile["data"]["ticket"]) {
+        let cm: CustomerMessage = {
+          type: 3,
+          ticket: profile["data"]["ticket"],
+          cid: profile["data"]["id"],
+          name: profile["data"]["nickname"],
+          oid: order_id,
+          occurredAt: date
+        };
+        const predis = new Promise<void>((resolve, reject) => {
+          cache.lpush("agent-customer-msg-queue", JSON.stringify(cm), function (err, result) {
+            if (err) {
+              log.info(err);
+              reject();
+            } else {
+              resolve();
+            }
+          });
+        });
+        ps.push(predis);
+      }
+      async_serial<void>(ps, [], () => {
         cache.setex(cbflag, 30, JSON.stringify({
-          code: 500,
-          msg: e.message
+          code: 200,
+          data: { id: order_id, no: order_no }
         }));
-        done();
+        sync_plan_orders(db, cache, domain, uid, order_id).then(() => {
+          log.info("Place an plan order %s", order_id);
+          done();
+        });
+      }, (e: Error) => {
+        db.query("ROLLBACK", [], (err: Error) => {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: e.message
+          }));
+          done();
+        });
       });
     });
   }).catch((e: Error) => {
@@ -585,7 +607,6 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
           } else if (state_code === 2) {
             ps.push(createAccount(domain, order, uid));
           }
-
           async_serial_ignore(ps, [], (_) => {
             order["state_code"] = state_code;
             order["state"] = state;
@@ -1067,19 +1088,16 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
     .then((underwrite: Object) => {
       return new Promise<Object>((resolve, reject) => {
         let orderid = underwrite["order_id"];
-        console.log("orderid------------" + orderid);
         cache.hget("order-entities", orderid, function (err, result) {
           if (result) {
             let order = JSON.parse(result);
             let expect_at = new Date(order["expect_at"]);
-            log.info(expect_at + "expect_at" + order["expect_at"]);
             let start_at = expect_at;
             if (expect_at.getTime() <= update_time.getTime()) {
               let date1 = new Date();
               let date2 = date1.getFullYear() + "-" + (date1.getMonth() + 1) + "-" + (date1.getDate());
               let date3 = new Date(date2);
               let date = date3.getTime() + 86400000;
-              // let date = expect_at.getFullYear() + "-" + (expect_at.getMonth() + 1) + "-" + (expect_at.getDate() + 1);
               start_at = new Date(date);
             }
             let stop_at = new Date(start_at.getTime() + 31536000000);
@@ -1112,57 +1130,72 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       multi.exec((err2, result2) => {
         if (result2) {
           if (underwrite_result.trim() === "通过") {
-            // log.info("userid------------" + order["vehicle"]["user_id"]);
-            cache.hget("wxuser", order["vehicle"]["user_id"], function (err, result3) {
-              if (err) {
-                log.info("get wxuser err");
-              } else {
-                let openid = result3;
-                let No = order["vehicle"]["license_no"];
-                let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
-                let name = order["vehicle"]["owner"]["name"];
-                let No1 = String(No);
-                let CarNo1 = String(CarNo);
-                let Name = String(name);
-                let postData = queryString.stringify({
-                  "user": openid,
-                  "No": No1,
-                  "CarNo": CarNo1,
-                  "Name": Name,
-                  "orderId": orderid
-                });
-
-                let options = {
-                  hostname: wxhost,
-                  port: 80,
-                  path: "/wx/wxpay/tmsgUnderwriting",
-                  method: "GET",
-                  headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Content-Length": Buffer.byteLength(postData)
-                  }
+            let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", order["vehicle"]["user_id"]);
+            p.then(profile => {
+              if (profile["code"] === 200 && profile["data"]["ticket"]) {
+                let cm: CustomerMessage = {
+                  type: 4,
+                  ticket: profile["data"]["ticket"],
+                  cid: order["vehicle"]["user_id"],
+                  name: profile["data"]["nickname"],
+                  oid: order["order_id"],
+                  occurredAt: new Date()
                 };
+                multi.lpush("agent-customer-msg-queue", JSON.stringify(cm));
+                cache.hget("wxuser", order["vehicle"]["user_id"], function (err, result3) {
+                  if (err) {
+                    log.info("get wxuser err");
+                  } else {
+                    let openid = result3;
+                    let No = order["vehicle"]["license_no"];
+                    let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
+                    let name = order["vehicle"]["owner"]["name"];
+                    let No1 = String(No);
+                    let CarNo1 = String(CarNo);
+                    let Name = String(name);
+                    let postData = queryString.stringify({
+                      "user": openid,
+                      "No": No1,
+                      "CarNo": CarNo1,
+                      "Name": Name,
+                      "orderId": orderid
+                    });
 
-                let req = http.request(options, (res) => {
-                  log.info(`STATUS: ${res.statusCode}`);
-                  log.info(`HEADERS: ${JSON.stringify(res.headers)}`);
-                  res.setEncoding("utf8");
-                  res.on("data", (chunk) => {
-                    log.info(`BODY: ${chunk}`);
-                  });
-                  res.on("end", () => {
-                    log.info("No more data in response.");
-                  });
-                });
-                req.on("error", (e) => {
-                  log.info(`problem with request: ${e.message}`);
-                });
+                    let options = {
+                      hostname: wxhost,
+                      port: 80,
+                      path: "/wx/wxpay/tmsgUnderwriting",
+                      method: "GET",
+                      headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Content-Length": Buffer.byteLength(postData)
+                      }
+                    };
 
-                // write data to request body
-                req.write(postData);
-                req.end();
+                    let req = http.request(options, (res) => {
+                      log.info(`STATUS: ${res.statusCode}`);
+                      log.info(`HEADERS: ${JSON.stringify(res.headers)}`);
+                      res.setEncoding("utf8");
+                      res.on("data", (chunk) => {
+                        log.info(`BODY: ${chunk}`);
+                      });
+                      res.on("end", () => {
+                        createAccount(domain, order, order["vehicle"]["user_id"]);
+                        log.info("No more data in response.");
+                      });
+                    });
+                    req.on("error", (e) => {
+                      log.info(`problem with request: ${e.message}`);
+                    });
+
+                    // write data to request body
+                    req.write(postData);
+                    req.end();
+                  }
+                });
               }
             });
+
           }
           underwrite_trigger.send(msgpack.encode({ orderid, order }));
           done();
@@ -1533,11 +1566,11 @@ function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 const vid = order["vid"];
                 const qid = order["qid"];
                 const updated_at = order["updated_at"].getTime();
+                multi.zadd("new-orders-id", updated_at, oid);
                 multi.hset("vid-poid", vid, oid);
                 multi.zadd("plan-orders", updated_at, oid);
                 multi.zadd("orders", updated_at, oid);
                 multi.zadd("orders-" + order["vehicle"]["user_id"], updated_at, oid);
-                multi.zadd("new-orders-id", updated_at, oid);
                 multi.hset("orderNo-id", order_no, oid);
                 multi.hset("order-vid-" + vid, qid, oid);
                 multi.hset("orderid-vid", oid, vid);

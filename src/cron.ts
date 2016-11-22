@@ -152,7 +152,7 @@ function update_order_recursive(db, done, nowdate, oids, acc, cb) {
           } else {
             let p = rpc("admin", servermap["plan"], null, "increaseJoinedCount", "00000000-0000-0000-0000-000000000001");
             p.then((p) => {
-              if (err || p.code !== 200) {
+              if (err || p["code"] !== 200) {
                 log.info(`call plan error for this ${oid}`);
                 oids.push(oid);
                 update_order_recursive(db, done, nowdate, oids, acc, cb);
