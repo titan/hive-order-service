@@ -84,17 +84,16 @@ function proportion(len: number) {
 
 
 
-function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb) {
+function update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb) {
   if (vids.length === 0) {
     done();
     cb(acc);
-  }
-  else {
+  } else {
     let vid = vids.shift();
     db.query("UPDATE group_vehicles SET type = $1, updated_at = $2 WHERE id = $3", [1, nowdate, vid], (err, result) => {
       if (err) {
         log.info(err);
-        done();
+        update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb);
       }
       else {
         redis.hget("vid-gid", vid, function (err, result) {
@@ -104,7 +103,7 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
             log.info(`not found gid ,this vid is ${vid}`);
           } else {
             redis.hget("group-entities", result, function (err1, result1) {
-              if (err || result1 === "") {
+              if (err || result1 === "" || result === null) {
                 log.info(`use this gid is ${result} to get group-entities err`);
               } else {
                 let group_entities = JSON.parse(result1);
@@ -114,10 +113,9 @@ function update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb
                 let new_joined_vehicles = group_entities["joined_vehicles"].push(new_join_vehicle);
                 group_entities["waiting_vehicles"] = new_waiting_vehicles;
                 group_entities["joined_vehicles"] = new_joined_vehicles;
-                // cache.hset("group-entities", result, JSON.parse(group_entities));
                 let group = { gid: result, group: group_entities };
                 acc.push(group);
-                update_group_vehicles_recursive(db, done, redis, nowdate, vids, acc, cb);
+                update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb);
               }
             });
           }
@@ -156,7 +154,6 @@ function update_order_recursive(db, done, nowdate, oids, acc, cb) {
                 log.info(`call plan error for this ${oid}`);
                 oids.push(oid);
                 update_order_recursive(db, done, nowdate, oids, acc, cb);
-                done();
               } else {
                 order_entities = JSON.parse(result);
                 order_entities["state"] = "已生效";
@@ -172,16 +169,15 @@ function update_order_recursive(db, done, nowdate, oids, acc, cb) {
     });
   }
 }
-function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
+function get_order_uid_recursive(db, done, nowdate, orders, acc, cb) {
   if (orders.length === 0) {
-    cb(acc, failings);
-    done();
+    cb(acc);
   } else {
     let order = orders.shift();
     db.query("UPDATE orders SET state_code = $1,state = $2, updated_at = $3,deleted = $4 WHERE id = $5", [5, "已失效", nowdate, true, order["id"]], (err, result) => {
       if (err) {
         log.info(err);
-        done();
+        get_order_uid_recursive(db, done, nowdate, orders, acc, cb);
       }
       else {
         let p = rpc<Object>("mobile", servermap["vehicle"], null, "getVehicle", order["vid"]);
@@ -190,10 +186,9 @@ function get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb) {
             let vehicle = v["data"];
             order["uid"] = vehicle["user_id"];
             acc.push(order);
-            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, cb);
           } else {
-            failings.push(order["id"]);
-            get_order_uid_recursive(db, done, nowdate, orders, acc, failings, cb);
+            get_order_uid_recursive(db, done, nowdate, orders, acc, cb);
           }
         });
       }
@@ -210,7 +205,7 @@ let timing = schedule.scheduleJob(rule, function () {
   const pdo = orderEffective();
   let ps = [pdo];
   async_serial_ignore<void>(ps, [], () => {
-    log.info("refresh done!");
+    log.info("orderEffective done!");
   });
 });
 
@@ -222,27 +217,23 @@ rule1.second = 0;
 let timing1 = schedule.scheduleJob(rule1, function () {
   const pdo = orderInvalid();
   let ps = [pdo];
-  async_serial_ignore<void>(ps, [], (failorders) => {
-    let nowdate = new Date();
-    redis.hset("cron-failorders", nowdate, failorders);
-    log.info(`refresh done! and the error orders is ${failorders}`);
+  async_serial_ignore<void>(ps, [], () => {
+    log.info("orderInvalid done");
   });
 });
 
 //------互助组每日比例变化
-let rule2 = new schedule.RecurrenceRule();
-rule1.hour = 0;
-rule1.minute = 5;
-rule1.second = 0;
-let timing2 = schedule.scheduleJob(rule2, function () {
-  const pdo = orderInvalid();
-  let ps = [pdo];
-  async_serial_ignore<void>(ps, [], (failorders) => {
-    let nowdate = new Date();
-    redis.hset("cron-failorders", nowdate, failorders);
-    log.info(`refresh done! and the error orders is ${failorders}`);
-  });
-});
+// let rule2 = new schedule.RecurrenceRule();
+// rule1.hour = 0;
+// rule1.minute = 5;
+// rule1.second = 0;
+// let timing2 = schedule.scheduleJob(rule2, function () {
+//   const pdo = orderInvalid();
+//   let ps = [pdo];
+//   async_serial_ignore<void>(ps, [], () => {
+//     log.info("");
+//   });
+// });
 
 
 
@@ -288,28 +279,28 @@ function orderEffective() {
             }
             let nowdate = new Date();
             update_order_recursive(db, done, nowdate, oids.map(oid => oid), [], (order_entities) => {
-              // update_group_vehicles_recursive(db, done, redis, nowdate, vids.map(vid => vid), [], (group_entities) => {
-              let multi = redis.multi();
-              for (let order_entitie of order_entities) {
-                // for (let group_entitie of group_entities) {
-                multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
-                // multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
-                // }
-              }
-              multi.exec((err, replise) => {
-                if (err) {
-                  log.info(err);
-                  reject(err);
-                  done();
+              update_group_vehicles_recursive(db, done, nowdate, vids.map(vid => vid), [], (group_entities) => {
+                let multi = redis.multi();
+                for (let group_entitie of group_entities) {
+                  multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
                 }
-                else {
-                  log.info("all exec success  and  done");
-                  resolve();
-                  done();
+                for (let order_entitie of order_entities) {
+                  multi.hset("order-entities", order_entitie["oid"], JSON.stringify(order_entitie["order"]));
                 }
+                multi.exec((err, replise) => {
+                  if (err) {
+                    log.info(err);
+                    reject(err);
+                    done();
+                  }
+                  else {
+                    log.info("all exec success  and  done");
+                    resolve();
+                    done();
+                  }
+                });
               });
             });
-            // });
           }
         });
       }
@@ -349,7 +340,7 @@ function orderInvalid() {
               invalidOrder["state_code"] = 5;
             }
             let nowdate = new Date();
-            get_order_uid_recursive(db, done, nowdate, invalidOrders.map(invalidOrder => invalidOrder), [], [], (delorders, failorders) => {
+            get_order_uid_recursive(db, done, nowdate, invalidOrders.map(invalidOrder => invalidOrder), [], (delorders) => {
               let multi = redis.multi();
               for (let delorder of delorders) {
                 multi.hdel("order-entities", delorder["id"]);
@@ -365,7 +356,7 @@ function orderInvalid() {
                   done();
                 } else {
                   log.info("all exec success  and  done");
-                  resolve(failorders);
+                  resolve();
                   done();
                 }
               });
@@ -377,44 +368,44 @@ function orderInvalid() {
   });
 }
 
-function updateGroupScale() {
-  return new Promise<void>((resolve, reject) => {
-    pool.connect(function (err, db, done) {
-      if (err) {
-        log.info("error fetching client from pool" + err);
-      } else {
-        db.query("SELECT g.id AS g_id, g.name AS g_name, g.founder AS g_founder , g.apportion AS g_apportion, gv.id AS gv_id, gv.gid AS gv_gid, gv.vid AS gv_vid, gv.type AS gv_type FROM groups AS g LEFT JOIN group_vehicles AS gv ON g.id = gv.gid WHERE g.deleted = false AND gv.type = 1", [], (err, result) => {
-          if (err) {
-            reject(err);
-            log.info("SELECT group error");
-          } else {
-            const groups: Object = {};
-            for (const row of result.rows) {
-              if (groups.hasOwnProperty(row.g_id)) {
-                groups[row.g_id]["vids"].push(row.gv_vid);
-              } else {
-                const group = {
-                  id: row.g_id,
-                  name: row.g_name,
-                  founder: row.g_founder,
-                  apportion: row.g_apportion,
-                  vids: []
-                };
-                groups[row.g_id] = group;
-              }
-            }
-            const gids = Object.keys(groups);
-            for (let gid of gids) {
-              let len = groups["gid"];
-              groups["gid"]["apportion"] = proportion(len);
-            }
-            
-          }
-        });
-      }
-    });
-  });
-}
+// function updateGroupScale() {
+//   return new Promise<void>((resolve, reject) => {
+//     pool.connect(function (err, db, done) {
+//       if (err) {
+//         log.info("error fetching client from pool" + err);
+//       } else {
+//         db.query("SELECT g.id AS g_id, g.name AS g_name, g.founder AS g_founder , g.apportion AS g_apportion, gv.id AS gv_id, gv.gid AS gv_gid, gv.vid AS gv_vid, gv.type AS gv_type FROM groups AS g LEFT JOIN group_vehicles AS gv ON g.id = gv.gid WHERE g.deleted = false AND gv.type = 1", [], (err, result) => {
+//           if (err) {
+//             reject(err);
+//             log.info("SELECT group error");
+//           } else {
+//             const groups: Object = {};
+//             for (const row of result.rows) {
+//               if (groups.hasOwnProperty(row.g_id)) {
+//                 groups[row.g_id]["vids"].push(row.gv_vid);
+//               } else {
+//                 const group = {
+//                   id: row.g_id,
+//                   name: row.g_name,
+//                   founder: row.g_founder,
+//                   apportion: row.g_apportion,
+//                   vids: []
+//                 };
+//                 groups[row.g_id] = group;
+//               }
+//             }
+//             const gids = Object.keys(groups);
+//             for (let gid of gids) {
+//               let len = groups["gid"];
+//               groups["gid"]["apportion"] = proportion(len);
+//             }
+
+//           }
+//         });
+//       }
+//     });
+//   });
+// }
 
 
 
