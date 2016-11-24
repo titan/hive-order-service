@@ -1180,14 +1180,19 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                         log.info(`BODY: ${chunk}`);
                       });
                       res.on("end", () => {
-                        createAccount(domain, order, order["vehicle"]["user_id"]);
-                        log.info("No more data in response.");
+                        let g = createGroup(domain, order, order["vehicle"]["user_id"]);
+                        g.then((result) => {
+                          if (result["code"] === 200) {
+                            log.inefo("all exec done");
+                          } else {
+                            log.info("createGroup err");
+                          }
+                        });
                       });
                     });
                     req.on("error", (e) => {
                       log.info(`problem with request: ${e.message}`);
                     });
-
                     // write data to request body
                     req.write(postData);
                     req.end();
