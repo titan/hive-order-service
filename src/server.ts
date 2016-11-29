@@ -108,15 +108,25 @@ function filterDate(created_at, begintime, endtime) {
   }
 }
 function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb) {
-  cache.hget(order_entities, key, function (err, result) {
-    let order = JSON.parse(result);
-    if (order["vehicle"]) {
-      if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
-        if (checkArgs(order["order_id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
-          acc.push(order);
+  if (key) {
+    cache.hget(order_entities, key, function (err, result) {
+      let order = JSON.parse(result);
+      if (order["vehicle"]) {
+        if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
+          if (checkArgs(order["order_id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
+            acc.push(order);
+          }
         }
       }
-    }
+      if (acc.length === len || cursor === keys.length - 1) {
+        cb(acc, cursor);
+      } else {
+        cursor++;
+        key = keys[cursor];
+        order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb);
+      }
+    });
+  } else {
     if (acc.length === len || cursor === keys.length - 1) {
       cb(acc, cursor);
     } else {
@@ -124,9 +134,8 @@ function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorde
       key = keys[cursor];
       order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorder_id, sownername, sphone, slicense_no, sbegintime, sendtime, sstate, acc, cb);
     }
-  });
+  }
 }
-
 // 获取所有订单
 svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, start: number, limit: number, maxScore: number, nowScore: number, sorder_id: string, sownername: string, sphone: string, slicense_no: string, sbegintime: string, sendtime: string, sstate: string) => {
   log.info("getallorders");
@@ -152,9 +161,9 @@ svc.call("getAllOrders", permissions, (ctx: Context, rep: ResponseFunction, star
           if (err2) {
             rep({ code: 500, msg: err2.message });
           } else if (result3) {
-            rep({ code: 200, data: orders, len: result.length, newOrder: result3.length, cursor: cursor });
+            rep({ code: 200, data: orders, len: result.length, newOrders: result3.length, cursor: cursor });
           } else {
-            rep({ code: 200, data: orders, len: result.length, newOrder: 0 });
+            rep({ code: 200, data: orders, len: result.length, newOrders: 0 });
           }
         });
       });
@@ -210,10 +219,9 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         multi.hget(order_entities, order_key);
       }
       multi.exec((err2, replies) => {
-        if (err2) {
-          log.error(err2, "query error");
+        if (err2 || replies == null || replies == "") {
+          rep({ code: 404, msg: "not found" });
         } else {
-          // log.info("replies==========" + replies);
           let nowDate = (new Date()).getTime() + 28800000;
           rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
         }
@@ -299,7 +307,7 @@ svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, 
 });
 // 下司机单
 svc.call("placeAnDriverOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, dids: any, summary: number, payment: number) => {
-  log.info("getDetail %j", dids);
+  log.info("placeAnDriverOrder", dids);
   if (!verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
     rep({
       code: 400,
@@ -411,7 +419,8 @@ svc.call("getPlanOrderByVehicle", permissions, (ctx: Context, rep: ResponseFunct
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
           log.info("replies==========" + result1);
-          rep({ code: 200, data: JSON.parse(result1) });
+          let nowDate = (new Date()).getTime() + 28800000;
+          rep({ code: 200, data: JSON.parse(result1), nowDate: nowDate });
         } else {
           rep({ code: 404, msg: "Order not found" });
         }
@@ -445,6 +454,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       multi.exec((err1, replies1) => {
         if (err1) {
           log.error(err1, "query error");
+        } else if (replies1 === null || replies1 == "") {
+          rep({ code: 404, msg: "not found" });
         } else {
           rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
         }
