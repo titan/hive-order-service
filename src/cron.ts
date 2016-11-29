@@ -82,31 +82,83 @@ function proportion(len: number) {
   return ((basis + result) / 100);
 }
 
+function createGroup(domain: string, order: Object, uid: string) {
+  return new Promise<any>((resolve, reject) => {
+    let vehicle = order["vehicle"];
+    let name: string = vehicle["owner"].name;
+    let identity_no: string = vehicle["owner"].identity_no;
+    let g_name: string;
+    let apportion: number = 0.20;
+    if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
+      g_name = name + "先生";
+    } else {
+      g_name = name + "女士";
+    }
+    let p = rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
+    p.then(r => {
+      resolve(r);
+    }).catch((e: Error) => {
+      reject(e);
+    });
+  });
+}
 
 
-function update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb) {
+
+function update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb) {
   if (vids.length === 0) {
     done();
     cb(acc);
   } else {
-    let vid = vids.shift();
-    db.query("UPDATE group_vehicles SET type = $1, updated_at = $2 WHERE id = $3", [1, nowdate, vid], (err, result) => {
-      if (err) {
-        log.info(err);
-        update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb);
-      }
-      else {
-        redis.hget("vid-gid", vid, function (err, result) {
+    let vid: string = vids.shift();
+    redis.hget("vid-gid", vid, (err1, result1) => {
+      if (result1 === null || result1 === "") {
+        let order: Object = {};
+        let domain = "mobile";
+        for (let o of orders) {
+          if (o["vehicle"]["id"] === vid) {
+            order = o;
+          }
+        }
+        let gupdategroupvehicles = new Promise<void>((resolve, reject) => {
+          db.query("UPDATE group_vehicles SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        let gupdategrouppollitems = new Promise<void>((resolve, reject) => {
+          db.query("UPDATE group_vehicles SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+        let gcreate = createGroup(domain, order, order["vehicle"]["user_id"]);
+        let ps = [gupdategroupvehicles, gupdategrouppollitems, gcreate];
+        async_serial<void>(ps, [], () => {
+          update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
+        }, (e: Error) => {
+          log.info(e);
+          update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
+        });
+      } else {
+        db.query("UPDATE group_vehicles SET type = $1, updated_at = $2 WHERE id = $3", [1, nowdate, vid], (err, result) => {
           if (err) {
-            log.info(`this ${vid} err to get gid`);
-          } else if (result === "" || result === null) {
-            log.info(`not found gid ,this vid is ${vid}`);
-          } else {
-            redis.hget("group-entities", result, function (err1, result1) {
-              if (err || result1 === "" || result === null) {
-                log.info(`use this gid is ${result} to get group-entities err`);
+            log.info(err);
+            update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
+          }
+          else {
+            redis.hget("group-entities", result1, function (err2, result2) {
+              if (err2 || result2 === "" || result2 === null) {
+                log.info(`use this gid is ${result2} to get group-entities err`);
               } else {
-                let group_entities = JSON.parse(result1);
+                let group_entities = JSON.parse(result2);
                 let waiting_vehicles = group_entities["waiting_vehicles"];
                 let new_waiting_vehicles = waiting_vehicles.filter(v => v["id"] !== vid);
                 let new_join_vehicle = waiting_vehicles.filter(v1 => v1["id"] === vid);
@@ -115,7 +167,7 @@ function update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb) {
                 group_entities["joined_vehicles"] = new_joined_vehicles;
                 let group = { gid: result, group: group_entities };
                 acc.push(group);
-                update_group_vehicles_recursive(db, done, nowdate, vids, acc, cb);
+                update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
               }
             });
           }
@@ -222,18 +274,18 @@ let timing1 = schedule.scheduleJob(rule1, function () {
   });
 });
 
-//------互助组每日比例变化
-// let rule2 = new schedule.RecurrenceRule();
-// rule1.hour = 0;
-// rule1.minute = 5;
-// rule1.second = 0;
-// let timing2 = schedule.scheduleJob(rule2, function () {
-//   const pdo = orderInvalid();
-//   let ps = [pdo];
-//   async_serial_ignore<void>(ps, [], () => {
-//     log.info("");
-//   });
-// });
+// ------互助组每日比例变化
+let rule2 = new schedule.RecurrenceRule();
+rule1.hour = 0;
+rule1.minute = 5;
+rule1.second = 0;
+let timing2 = schedule.scheduleJob(rule2, function () {
+  const pdo = updateGroupScale();
+  let ps = [pdo];
+  async_serial_ignore<void>(ps, [], () => {
+    log.info("");
+  });
+});
 
 
 
@@ -279,7 +331,7 @@ function orderEffective() {
             }
             let nowdate = new Date();
             update_order_recursive(db, done, nowdate, oids.map(oid => oid), [], (order_entities) => {
-              update_group_vehicles_recursive(db, done, nowdate, vids.map(vid => vid), [], (group_entities) => {
+              update_group_vehicles_recursive(db, done, orders, nowdate, vids.map(vid => vid), [], (group_entities) => {
                 let multi = redis.multi();
                 for (let group_entitie of group_entities) {
                   multi.hset("group-entities", group_entitie["gid"], JSON.stringify(group_entitie["group"]));
@@ -368,44 +420,81 @@ function orderInvalid() {
   });
 }
 
-// function updateGroupScale() {
-//   return new Promise<void>((resolve, reject) => {
-//     pool.connect(function (err, db, done) {
-//       if (err) {
-//         log.info("error fetching client from pool" + err);
-//       } else {
-//         db.query("SELECT g.id AS g_id, g.name AS g_name, g.founder AS g_founder , g.apportion AS g_apportion, gv.id AS gv_id, gv.gid AS gv_gid, gv.vid AS gv_vid, gv.type AS gv_type FROM groups AS g LEFT JOIN group_vehicles AS gv ON g.id = gv.gid WHERE g.deleted = false AND gv.type = 1", [], (err, result) => {
-//           if (err) {
-//             reject(err);
-//             log.info("SELECT group error");
-//           } else {
-//             const groups: Object = {};
-//             for (const row of result.rows) {
-//               if (groups.hasOwnProperty(row.g_id)) {
-//                 groups[row.g_id]["vids"].push(row.gv_vid);
-//               } else {
-//                 const group = {
-//                   id: row.g_id,
-//                   name: row.g_name,
-//                   founder: row.g_founder,
-//                   apportion: row.g_apportion,
-//                   vids: []
-//                 };
-//                 groups[row.g_id] = group;
-//               }
-//             }
-//             const gids = Object.keys(groups);
-//             for (let gid of gids) {
-//               let len = groups["gid"];
-//               groups["gid"]["apportion"] = proportion(len);
-//             }
 
-//           }
-//         });
-//       }
-//     });
-//   });
-// }
+
+
+
+function update_group_recursive(db, done, nowdate, groups, gids, acc, cb) {
+  if (gids.length === 0) {
+    cb(acc);
+  } else {
+    let gid = gids.shift();
+    let gupdategroup = new Promise<void>((resolve, reject) => {
+      db.query("UPDATE groups SET apportion = $1, updated_at = $2 WHERE id = $5", [groups["gid"]["apportion"], nowdate, gid], (err, result) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+}
+
+function updateGroupScale() {
+  return new Promise<void>((resolve, reject) => {
+    pool.connect(function (err, db, done) {
+      if (err) {
+        log.info("error fetching client from pool" + err);
+      } else {
+        db.query("SELECT g.id AS g_id, g.name AS g_name, g.founder AS g_founder, g.apportion AS g_apportion, gv.id AS gv_id, gv.gid AS gv_gid, gv.vid AS gv_vid, gv.type AS gv_type FROM groups AS g LEFT JOIN group_vehicles AS gv ON g.id = gv.gid WHERE g.deleted = false AND gv.type = 1", [], (err, result) => {
+          if (err) {
+            reject(err);
+            log.info("SELECT group error");
+          } else {
+            const groups: Object = {};
+            for (const row of result.rows) {
+              if (groups.hasOwnProperty(row.g_id)) {
+                groups[row.g_id]["vids"].push(row.gv_vid);
+              } else {
+                const group = {
+                  id: row.g_id,
+                  name: row.g_name,
+                  founder: row.g_founder,
+                  apportion: row.g_apportion,
+                  vids: []
+                };
+                groups[row.g_id] = group;
+              }
+            }
+            const gids = Object.keys(groups);
+            for (let gid of gids) {
+              let len = groups["gid"]["vids"];
+              if (len === 1) {
+                groups["gid"]["apportion"] = 0.20;
+              } else if (len === 2) {
+                groups["gid"]["apportion"] = 0.25;
+              } else if (len >= 3 && len <= 4) {
+                groups["gid"]["apportion"] = 0.30;
+              } else if (len >= 5 && len <= 9) {
+                groups["gid"]["apportion"] = 0.35;
+              } else if (len >= 10 && len <= 14) {
+                groups["gid"]["apportion"] = 0.40;
+              } else if (len >= 15 && len <= 19) {
+                groups["gid"]["apportion"] = 0.45;
+              } else if (len >= 20) {
+                groups["gid"]["apportion"] = 0.50;
+              }
+            }
+            let nowdate = new Date();
+            update_group_recursive(db, done, nowdate, groups, gids.map(gid => gid), [], () => {
+            });
+          }
+        });
+      }
+    });
+  });
+}
 
 
 

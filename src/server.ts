@@ -454,6 +454,8 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       multi.exec((err1, replies1) => {
         if (err1) {
           log.error(err1, "query error");
+        } else if (replies1 === null || replies1 == "") {
+          rep({ code: 404, msg: "not found" });
         } else {
           rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
         }

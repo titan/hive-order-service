@@ -420,7 +420,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
   let order_id = uuid.v1();
   let item_id = uuid.v1();
   let event_id = uuid.v1();
-  let state_code = 1;
+  let state_code = 2;
   let state = "已支付";
   let type = 1;
   let driver_id = uuid.v1();
