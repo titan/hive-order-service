@@ -8,7 +8,7 @@ import * as msgpack from "msgpack-lite";
 import * as nanomsg from "nanomsg";
 import * as http from "http";
 import * as queryString from "querystring";
-import {CustomerMessage} from "recommend-library";
+import { CustomerMessage } from "recommend-library";
 let log = bunyan.createLogger({
   name: "order-processor",
   streams: [
@@ -328,8 +328,9 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
           cache.setex(cbflag, 30, JSON.stringify({
             code: 500,
             msg: e.message
-          }));
-          done();
+          }), (err, result) => {
+            done();
+          });
         });
       });
     });
@@ -337,8 +338,9 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
     cache.setex(cbflag, 30, JSON.stringify({
       code: 500,
       msg: e.message
-    }));
-    done();
+    }), (err, result) => {
+      done();
+    });
   });
 });
 
@@ -357,8 +359,9 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
       cache.setex(cbflag, 30, JSON.stringify({
         code: 404,
         msg: "Order id not found"
-      }));
-      done();
+      }), (err, result) => {
+        done();
+      });
     } else {
       let order_id = result;
       db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, order_id], (err: Error, result: ResultSet) => {
@@ -367,8 +370,9 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
           cache.setex(cbflag, 30, JSON.stringify({
             code: 500,
             msg: err.message
-          }));
-          done();
+          }), (err, result) => {
+            done();
+          });
         } else {
           cache.hget("order-entities", order_id, function (err1, result1) {
             if (err1) {
@@ -376,14 +380,16 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
               cache.setex(cbflag, 30, JSON.stringify({
                 code: 500,
                 msg: err1.message
-              }));
-              done();
+              }), (err, result) => {
+                done();
+              });
             } else if (result1 == null) {
               cache.setex(cbflag, 30, JSON.stringify({
                 code: 404,
                 msg: "Order not found"
-              }));
-              done();
+              }), (err, result) => {
+                done();
+              });
             } else {
               let order_entities = JSON.parse(result1);
               order_entities["id"] = new_order_no;
@@ -397,15 +403,18 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
                   cache.setex(cbflag, 30, JSON.stringify({
                     code: 500,
                     msg: err2.message
-                  }));
+                  }), (err, result) => {
+                    done();
+                  });
                 } else {
                   log.info("updateOrderNo done");
                   cache.setex(cbflag, 30, JSON.stringify({
                     code: 200,
                     data: new_order_no
-                  }));
+                  }), (err, result) => {
+                    done();
+                  });
                 }
-                done();
               });
             }
           });
@@ -434,8 +443,9 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
       cache.setex(cbflag, 30, JSON.stringify({
         code: 500,
         msg: err.message
-      }));
-      done();
+      }), (err, result) => {
+        done();
+      });
     } else {
       // vid, dids, summary, payment
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error, result: ResultSet) => {
@@ -444,8 +454,9 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
           cache.setex(cbflag, 30, JSON.stringify({
             code: 500,
             msg: err.message
-          }));
-          done();
+          }), (err, result) => {
+            done();
+          });
           return;
         } else {
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: ResultSet) => {
@@ -454,8 +465,9 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
               cache.setex(cbflag, 30, JSON.stringify({
                 code: 500,
                 msg: err.message
-              }));
-              done();
+              }), (err, result) => {
+                done();
+              });
               return;
             } else {
               let args2 = {
@@ -479,8 +491,9 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                     cache.setex(cbflag, 30, JSON.stringify({
                       code: 500,
                       msg: err.message
-                    }));
-                    done();
+                    }), (err, result) => {
+                      done();
+                    });
                   } else {
                     let vehicle = v["data"];
                     async_serial_driver(driver_promises, [], drivers => {
@@ -509,15 +522,17 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                             cache.setex(cbflag, 30, JSON.stringify({
                               code: 500,
                               msg: err3.message
-                            }));
-                            done();
+                            }), (err, result) => {
+                              done();
+                            });
                           } else {
                             log.info("placeAnDriverOrder: done");
                             cache.setex(cbflag, 30, JSON.stringify({
                               code: 200,
                               data: order_id
-                            }));
-                            done(); // close db and cache connection
+                            }), (err, result) => {
+                              done();
+                            });
                           }
                         });
                       });
@@ -576,67 +591,108 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
   let balance: number = null;
   let start_at = null;
   let paid_at = new Date();
-  db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id], (err: Error, result: ResultSet) => {
-    if (err) {
-      log.info(err);
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 500,
-        msg: err.message
-      }));
-      done();
-    } else {
+  let pquery = null;
+  if (state_code === 2) {
+    pquery = new Promise<void>((resolve, reject) => {
+      db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id], (err: Error, result: ResultSet) => {
+        if (err) {
+          log.info(err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  } else {
+    pquery = new Promise<void>((resolve, reject) => {
+      db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id], (err: Error, result: ResultSet) => {
+        if (err) {
+          log.info(err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+  pquery.then(() => {
+    let predis = new Promise<Object>((resolve, reject) => {
       cache.hget("order-entities", order_id, function (err, reply) {
         if (err) {
           log.info("err,get redis error");
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 500,
-            msg: err.message
-          }));
-          done();
+          reject(err);
         } else if (!reply) {
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 404,
-            msg: "Order not found!"
-          }));
-          done();
+          reject("Order not found!");
         } else {
           let order = JSON.parse(reply);
-          let ps = [];
-          if (state_code === 3) {
-            ps.push(createGroup(domain, order, uid));
-          } else if (state_code === 2) {
-            ps.push(createAccount(domain, order, uid));
-          }
-          async_serial_ignore(ps, [], (_) => {
-            order["state_code"] = state_code;
-            order["state"] = state;
+          let multi = cache.multi();
+          let updated_at = (new Date()).getTime();
+          order["state_code"] = state_code;
+          order["state"] = state;
+          order["updated_at"] = paid_at;
+          if (state_code === 2) {
             order["paid_at"] = paid_at;
-            let updated_at = new Date().getTime();
-            let multi = cache.multi();
-            multi.hset("order-entities", order_id, JSON.stringify(order));
             multi.zrem("new-orders-id", order_id);
             multi.zadd("new-pays-id", updated_at, order_id);
-            multi.setex(cbflag, 30, JSON.stringify({
-              code: 200,
-              data: "Success"
-            }));
-            multi.exec((err, result1) => {
-              if (err) {
-                log.info("err:hset order_entities error");
-                cache.setex(cbflag, 30, JSON.stringify({
-                  code: 500,
-                  msg: err.message
-                }));
-                done();
-              } else {
-                log.info("db end in updateOrderState");
-                done();
-              }
-            });
+          }
+          multi.hset("order-entities", order_id, JSON.stringify(order));
+          multi.exec((err, result1) => {
+            if (err) {
+              log.info("err:hset order_entities error");
+              reject(err);
+            } else {
+              resolve(order);
+              log.info("db end in updateOrderState");
+            }
           });
         }
       });
-    }
+    });
+    predis.then((order) => {
+      if (state_code === 2) {
+        createAccount(domain, order, uid).then((result) => {
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 200,
+            data: order_id
+          }), (err, result2) => {
+            done();
+            log.info("UpdateOrderState success");
+          });
+        }).catch((e: Error) => {
+          log.info(e);
+          cache.setex(cbflag, 30, JSON.stringify({
+            code: 500,
+            msg: e.message
+          }), (err, result) => {
+            done();
+          });
+        });
+      } else {
+        cache.setex(cbflag, 30, JSON.stringify({
+          code: 200,
+          data: order_id
+        }), (err, result) => {
+          done();
+          log.info("UpdateOrderState success");
+        });
+      }
+    }).catch((e: Error) => {
+      log.info(e);
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: e.message
+      }), (err, result) => {
+        done();
+      });
+    });
+  }).catch((e: Error) => {
+    log.info(e);
+    cache.setex(cbflag, 30, JSON.stringify({
+      code: 500,
+      msg: e.message
+    }), (err, result) => {
+      done();
+    });
   });
 });
 
@@ -660,8 +716,9 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
       cache.setex(cbflag, 30, JSON.stringify({
         code: 500,
         msg: err.message
-      }));
-      done();
+      }), (err, result) => {
+        done();
+      });
     } else {
       db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1, $2, $3, $4, $5, $6, $7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error) => {
         if (err) {
@@ -670,8 +727,9 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
             cache.setex(cbflag, 30, JSON.stringify({
               code: 500,
               msg: err.message
-            }));
-            done();
+            }), (err, result) => {
+              done();
+            });
           });
         } else {
           db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
@@ -681,8 +739,9 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                 cache.setex(cbflag, 30, JSON.stringify({
                   code: 500,
                   msg: err.message
-                }));
-                done();
+                }), (err, result) => {
+                  done();
+                });
               });
             } else {
               db.query("INSERT INTO sale_order_ext(oid, pid, qid, opr_level) VALUES($1, $2, $3, $4)", [order_id, pid, qid, opr_level], (err: Error, result: ResultSet) => {
@@ -692,8 +751,9 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                     cache.setex(cbflag, 30, JSON.stringify({
                       code: 500,
                       msg: err.message
-                    }));
-                    done();
+                    }), (err, result) => {
+                      done();
+                    });
                   });
                 } else {
                   insert_sale_order_items_recursive(db, done, order_id, pid, items, piids.map(piid => piid), {}, () => {
@@ -704,8 +764,9 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                         cache.setex(cbflag, 30, JSON.stringify({
                           code: 404,
                           msg: "Vehicle or plan not found"
-                        }));
-                        done();
+                        }), (err, result) => {
+                          done();
+                        });
                       } else {
                         let vehicle = obj[0]["data"];
                         let plan = obj[1]["data"];
@@ -746,22 +807,26 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                             cache.setex(cbflag, 30, JSON.stringify({
                               code: 500,
                               msg: err3.message
-                            }));
+                            }), (err, result) => {
+                              done();
+                            });
                           } else {
                             cache.setex(cbflag, 30, JSON.stringify({
                               code: 200,
                               data: order_id
-                            }));
+                            }), (err, result) => {
+                              done();
+                            });
                           }
-                          done(); // close db and cache connection
                         });
                       }
                     }, (e: Error) => {
                       cache.setex(cbflag, 30, JSON.stringify({
                         code: 500,
                         msg: e.message
-                      }));
-                      done();
+                      }), (err, result) => {
+                        done();
+                      });
                     });
                   });
                 }
@@ -789,8 +854,9 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
       cache.setex(cbflag, 30, JSON.stringify({
         code: 500,
         msg: err.message
-      }));
-      done();
+      }), (err, result) => {
+        done();
+      });
     } else {
       db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
         if (err) {
@@ -799,8 +865,9 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
           cache.setex(cbflag, 30, JSON.stringify({
             code: 500,
             msg: err.message
-          }));
-          done();
+          }), (err, result) => {
+            done();
+          });
         }
         else {
           update_sale_order_items_recursive(db, done, prices.map(price => price), piids.map(piid => piid), order_id, {}, () => {
@@ -810,8 +877,9 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
                 cache.setex(cbflag, 30, JSON.stringify({
                   code: 500,
                   msg: err.message
-                }));
-                done();
+                }), (err, result) => {
+                  done();
+                });
               } else {
                 log.info(result);
                 let order_entities = JSON.parse(result);
@@ -834,15 +902,17 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
                     cache.setex(cbflag, 30, JSON.stringify({
                       code: 500,
                       msg: err.message
-                    }));
-                    done();
+                    }), (err, result) => {
+                      done();
+                    });
                   } else {
                     log.info("db end in updateOrderState");
                     cache.setex(cbflag, 30, JSON.stringify({
                       code: 200,
                       data: order_id
-                    }));
-                    done();
+                    }), (err, result) => {
+                      done();
+                    });
                   }
                 });
               }
@@ -896,9 +966,10 @@ processor.call("createUnderwrite", (db: PGClient, cache: RedisClient, done: Done
     cache.setex(callback, 30, JSON.stringify({
       code: 500,
       msg: error.message
-    }));
+    }), (err, result) => {
+      done();
+    });
     log.info("err" + error);
-    done();
   });
 });
 
@@ -1019,6 +1090,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
         });
       } else if (err) {
         log.error(err);
+        done();
       }
     });
   }, (e: Error) => {
@@ -1029,8 +1101,9 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
       cache.setex(callback, 30, JSON.stringify({
         code: 500,
         msg: err.message
-      }));
-      done();
+      }), (err, result) => {
+        done();
+      });
     });
     log.info("err" + e);
   });
@@ -1160,7 +1233,6 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                       "Name": Name,
                       "orderId": orderid
                     });
-
                     let options = {
                       hostname: wxhost,
                       port: 80,
@@ -1171,7 +1243,6 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                         "Content-Length": Buffer.byteLength(postData)
                       }
                     };
-
                     let req = http.request(options, (res) => {
                       log.info(`STATUS: ${res.statusCode}`);
                       log.info(`HEADERS: ${JSON.stringify(res.headers)}`);
@@ -1180,20 +1251,19 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                         log.info(`BODY: ${chunk}`);
                       });
                       res.on("end", () => {
-                        let g = createGroup(domain, order, order["vehicle"]["user_id"]);
-                        g.then((result) => {
-                          if (result["code"] === 200) {
-                            log.inefo("all exec done");
-                          } else {
-                            log.info("createGroup err");
-                          }
-                        });
+                        // let g = createGroup(domain, order, order["vehicle"]["user_id"]);
+                        // g.then((result) => {
+                        //   if (result["code"] === 200) {
+                        //     log.info("all exec done");
+                        //   } else {
+                        //     log.info("createGroup err");
+                        //   }
+                        // });
                       });
                     });
                     req.on("error", (e) => {
                       log.info(`problem with request: ${e.message}`);
                     });
-                    // write data to request body
                     req.write(postData);
                     req.end();
                   }
@@ -1208,8 +1278,9 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
           cache.setex(callback, 30, JSON.stringify({
             code: 500,
             msg: "update order cache error"
-          }));
-          done();
+          }), (err, result) => {
+            done();
+          });
         }
       });
     })
@@ -1217,9 +1288,10 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
       cache.setex(callback, 30, JSON.stringify({
         code: 500,
         msg: error.message
-      }));
+      }), (err, result) => {
+        done();
+      });
       log.info("err" + error);
-      done();
     });
 });
 
@@ -1311,18 +1383,20 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
         cache.setex(cbflag, 30, JSON.stringify({
           code: 404,
           msg: "Not found underwrite"
-        }));
+        }), (err, result) => {
+          done();
+        });
         log.info("Not found underwrite");
-        done();
       }
     })
     .catch(error => {
       cache.setex(cbflag, 30, JSON.stringify({
         code: 500,
         msg: error.message
-      }));
+      }), (err, result) => {
+        done();
+      });
       log.info("err" + error);
-      done();
     });
 }
 
