@@ -304,7 +304,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
                     occurredAt: date
                 };
                 const predis = new Promise<void>((resolve, reject) => {
-                    cache.lpush("agent-customer-msg-queue", JSON.stringify(cm), function(err, result) {
+                    cache.lpush("agent-customer-msg-queue", JSON.stringify(cm), function (err, result) {
                         if (err) {
                             log.info(err);
                             reject();
@@ -348,7 +348,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
 
 processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFunction, order_no: string, new_order_no: string, cbflag) => {
     log.info("updateOrderNo" + order_no);
-    cache.hget("orderNo-id", order_no, function(err, result) {
+    cache.hget("orderNo-id", order_no, function (err, result) {
         if (err) {
             log.info(err + "get order_id err or order_id not found");
             cache.setex(cbflag, 30, JSON.stringify({
@@ -375,7 +375,7 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
                         done();
                     });
                 } else {
-                    cache.hget("order-entities", order_id, function(err1, result1) {
+                    cache.hget("order-entities", order_id, function (err1, result1) {
                         if (err1) {
                             log.info(err1 + "get order_entities err or order_entities not found");
                             cache.setex(cbflag, 30, JSON.stringify({
@@ -500,7 +500,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                                         async_serial_driver(driver_promises, [], drivers => {
                                             log.info("=============================555" + drivers);
                                             let vid_doid = [];
-                                            cache.hget("vid-doid", vid, function(err, result1) {
+                                            cache.hget("vid-doid", vid, function (err, result1) {
                                                 if (err) {
                                                     log.info("get vid-doid error");
                                                 } else if (result1) {
@@ -618,7 +618,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
     }
     pquery.then(() => {
         let predis = new Promise<Object>((resolve, reject) => {
-            cache.hget("order-entities", order_id, function(err, reply) {
+            cache.hget("order-entities", order_id, function (err, reply) {
                 if (err) {
                     log.info("err,get redis error");
                     reject(err);
@@ -872,7 +872,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
                 }
                 else {
                     update_sale_order_items_recursive(db, done, prices.map(price => price), piids.map(piid => piid), order_id, {}, () => {
-                        cache.hget("order-entities", order_id, function(err, result) {
+                        cache.hget("order-entities", order_id, function (err, result) {
                             if (err) {
                                 log.info("err,get redis error");
                                 cache.setex(cbflag, 30, JSON.stringify({
@@ -1044,7 +1044,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
     });
     promises.push(pcommit);
     let predis = new Promise<Object>((resolve, reject) => {
-        cache.hget("underwrite-entities", uwid, function(err, result) {
+        cache.hget("underwrite-entities", uwid, function (err, result) {
             if (result) {
                 let underwrite = JSON.parse(result);
                 resolve(underwrite);
@@ -1057,7 +1057,7 @@ processor.call("fillUnderwrite", (db: PGClient, cache: RedisClient, done: DoneFu
         });
     });
     async_serial<void>(promises, [], () => {
-        cache.hget("underwrite-entities", uwid, function(err, result) {
+        cache.hget("underwrite-entities", uwid, function (err, result) {
             if (result) {
                 let op = rpc<Object>(domain, servermap["operator"], null, "getOperator", opid);
                 op.then(o => {
@@ -1126,7 +1126,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
     pquery.then(() => {
         let predis = new Promise<Object>((resolve, reject) => {
             log.info("redis " + uwid);
-            cache.hget("underwrite-entities", uwid, function(err, result) {
+            cache.hget("underwrite-entities", uwid, function (err, result) {
                 if (result) {
                     resolve(JSON.parse(result));
                 } else if (err) {
@@ -1160,7 +1160,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
             punderwrite.then((underwrite: Object) => {
                 let porder = new Promise<Object>((resolve, reject) => {
                     let orderid = underwrite["order_id"];
-                    cache.hget("order-entities", orderid, function(err, result) {
+                    cache.hget("order-entities", orderid, function (err, result) {
                         if (result) {
                             let order = JSON.parse(result);
                             let expect_at = new Date(order["expect_at"]);
@@ -1191,114 +1191,140 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                     });
                 });
                 porder.then((order: Object) => {
-                    let orderid = order["order_id"];
-                    cache.hset("order-entities", orderid, JSON.stringify(order), (err2, result2) => {
-                        if (err2) {
-                            log.info(err2);
-                            cache.setex(callback, 30, JSON.stringify({
-                                code: 500,
-                                msg: err2
-                            }), (err, result) => {
-                                done();
-                            });
-                        } else {
-                            if (underwrite_result.trim() === "通过") {
-                                let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", order["vehicle"]["user_id"]);
-                                p.then(profile => {
-                                    if (profile["code"] === 200 && profile["data"]["ticket"]) {
-                                        let cm: CustomerMessage = {
-                                            type: 4,
-                                            ticket: profile["data"]["ticket"],
-                                            cid: order["vehicle"]["user_id"],
-                                            name: profile["data"]["nickname"],
-                                            oid: order["order_id"],
-                                            qid: order["qid"],
-                                            occurredAt: new Date()
-                                        };
-                                        cache.lpush("agent-customer-msg-queue", JSON.stringify(cm), (err3, result3) => {
-                                            if (err3) {
-                                                log.info(err3);
-                                                cache.setex(callback, 30, JSON.stringify({
-                                                    code: 500,
-                                                    msg: err3
-                                                }), (err, result) => {
-                                                    done();
-                                                });
-                                            } else {
-                                              log.info(result3);
-                                                cache.hget("wxuser", order["vehicle"]["user_id"], function(err4, result4) {
-                                                    if (err4) {
-                                                        log.info("get wxuser err");
-                                                        log.info(err2);
-                                                        cache.setex(callback, 30, JSON.stringify({
-                                                            code: 500,
-                                                            msg: err4
-                                                        }), (err, result) => {
-                                                            done();
-                                                        });
-                                                    } else {
-                                                        let openid = result4;
-                                                        let No = order["vehicle"]["license_no"];
-                                                        let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
-                                                        let name = order["vehicle"]["owner"]["name"];
-                                                        let No1 = String(No);
-                                                        let CarNo1 = String(CarNo);
-                                                        let Name = String(name);
-                                                        let postData = queryString.stringify({
-                                                            "user": openid,
-                                                            "No": No1,
-                                                            "CarNo": CarNo1,
-                                                            "Name": Name,
-                                                            "orderId": orderid
-                                                        });
-                                                        let options = {
-                                                            hostname: wxhost,
-                                                            port: 80,
-                                                            path: "/wx/wxpay/tmsgUnderwriting",
-                                                            method: "GET",
-                                                            headers: {
-                                                                "Content-Type": "application/x-www-form-urlencoded",
-                                                                "Content-Length": Buffer.byteLength(postData)
-                                                            }
-                                                        };
-                                                        let req = http.request(options, (res) => {
-                                                            log.info(`STATUS: ${res.statusCode}`);
-                                                            res.setEncoding("utf8");
-                                                            res.on("data", (chunk) => {
-                                                                log.info(`BODY: ${chunk}`);
-                                                            });
-                                                            res.on("end", () => {
-                                                                log.info("SubmitUnderwrite done");
-                                                                cache.setex(callback, 30, JSON.stringify({
-                                                                    code: 200,
-                                                                    uwid: uwid
-                                                                }), (err, result) => {
-                                                                    done();
-                                                                });
-                                                            });
-                                                        });
-                                                        req.on("error", (e) => {
-                                                            log.info(`problem with request: ${e.message}`);
-                                                        });
-                                                        req.write(postData);
-                                                        req.end();
-                                                    }
-                                                });
-                                            }
+                    let pmessage = new Promise<Object>((resolve, reject) => {
+                        let orderid = order["order_id"];
+                        cache.hset("order-entities", orderid, JSON.stringify(order), (err2, result2) => {
+                            if (err2) {
+                                log.info(err2);
+                                reject(err2);
+                            } else {
+                                if (underwrite_result.trim() === "通过") {
+                                    let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", order["vehicle"]["user_id"]);
+                                    p.then(profile => {
+                                        if (profile["code"] === 200 && profile["data"]["ticket"]) {
+                                            let cm: CustomerMessage = {
+                                                type: 4,
+                                                ticket: profile["data"]["ticket"],
+                                                cid: order["vehicle"]["user_id"],
+                                                name: profile["data"]["nickname"],
+                                                oid: order["order_id"],
+                                                qid: order["qid"],
+                                                occurredAt: new Date()
+                                            };
+                                            cache.lpush("agent-customer-msg-queue", JSON.stringify(cm), (err3, result3) => {
+                                                if (err3) {
+                                                    log.info(err3);
+                                                    reject(err3);
+                                                } else {
+                                                    resolve(order);
+                                                }
+                                            });
+                                        } else {
+                                            reject("not found profile " + JSON.stringify(profile));
+                                        }
+                                    }).catch((e:Error) =>{
+                                        reject(e);
+                                    });
+                                } else {
+                                    resolve(order);
+                                }
+                            }
+                        });
+                    });
+                    pmessage.then((order) => {
+                        if (underwrite_result.trim() === "通过") {
+                            let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", order["vehicle"]["user_id"]);
+                            p.then(profile => {
+                                if (profile["code"] === 200) {
+                                    let openid = profile["data"]["openid"];
+                                    let No = order["vehicle"]["license_no"];
+                                    let CarNo = order["vehicle"]["vehicle_model"]["familyName"];
+                                    let name = order["vehicle"]["owner"]["name"];
+                                    let No1 = String(No);
+                                    let CarNo1 = String(CarNo);
+                                    let Name = String(name);
+                                    let postData = queryString.stringify({
+                                        "user": openid,
+                                        "No": No1,
+                                        "CarNo": CarNo1,
+                                        "Name": Name,
+                                        "orderId": order["order_id"]
+                                    });
+                                    let options = {
+                                        hostname: wxhost,
+                                        port: 80,
+                                        path: "/wx/wxpay/tmsgUnderwriting",
+                                        method: "GET",
+                                        headers: {
+                                            "Content-Type": "application/x-www-form-urlencoded",
+                                            "Content-Length": Buffer.byteLength(postData)
+                                        }
+                                    };
+                                    let req = http.request(options, (res) => {
+                                        log.info(`STATUS: ${res.statusCode}`);
+                                        res.setEncoding("utf8");
+                                        res.on("data", (chunk) => {
+                                            log.info(`BODY: ${chunk}`);
                                         });
-                                    } else {
+                                        res.on("end", () => {
+                                            log.info("SubmitUnderwrite done");
+                                            cache.setex(callback, 30, JSON.stringify({
+                                                code: 200,
+                                                uwid: uwid
+                                            }), (err, result) => {
+                                                done();
+                                            });
+                                        });
+                                    });
+                                    req.on("error", (e) => {
+                                        log.info(`problem with request: ${e.message}`); 
                                         cache.setex(callback, 30, JSON.stringify({
                                             code: 500,
-                                            msg: "Not found openid"
+                                            msg: e.message
                                         }), (err, result) => {
                                             done();
                                         });
-                                    }
+                                        log.info("err" + e);
+
+                                    });
+                                    req.write(postData);
+                                    req.end();
+                                } else {
+                                    cache.setex(callback, 30, JSON.stringify({
+                                        code: 500,
+                                        msg: "not found openid"
+                                    }), (err, result) => {
+                                        done();
+                                    });
+                                    log.info("not found openid");
+                                }
+                            }).catch(error => {
+                                cache.setex(callback, 30, JSON.stringify({
+                                    code: 500,
+                                    msg: error.message
+                                }), (err, result) => {
+                                    done();
                                 });
-                            }
-                            underwrite_trigger.send(msgpack.encode({ orderid, order }));
+                                log.info("err" + error);
+                            });
+                        } else {
+                            log.info("SubmitUnderwrite success without call user");
+                            cache.setex(callback, 30, JSON.stringify({
+                                code: 200,
+                                uwid: uwid
+                            }), (err, result) => {
+                                done();
+                            });
                         }
-                    });
+                    }).catch(error => {
+                        cache.setex(callback, 30, JSON.stringify({
+                            code: 500,
+                            msg: error.message
+                        }), (err, result) => {
+                            done();
+                        });
+                        log.info("err" + error);
+                    })
                 }).catch(error => {
                     cache.setex(callback, 30, JSON.stringify({
                         code: 500,
@@ -1389,7 +1415,7 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
         .then(() => {
             return new Promise<Object>((resolve, reject) => {
                 log.info("redis " + uwid);
-                cache.hget("underwrite-entities", uwid, function(err, result) {
+                cache.hget("underwrite-entities", uwid, function (err, result) {
                     if (result) {
                         resolve(JSON.parse(result));
                     } else if (err) {
