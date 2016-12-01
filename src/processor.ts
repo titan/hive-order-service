@@ -1220,7 +1220,8 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                                                 }
                                             });
                                         } else {
-                                            reject("not found profile " + JSON.stringify(profile));
+                                            resolve(order);
+                                            log.info("no ticket user");
                                         }
                                     }).catch((e:Error) =>{
                                         reject(e);
