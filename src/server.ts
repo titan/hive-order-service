@@ -285,6 +285,53 @@ svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, v
     }
   });
 });
+//获取当前车的驾驶人信息
+svc.call("getDriverForVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+  log.info("getDriverForVehicle");
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.zrange(orders + ctx.uid, 0, -1, function (err, result) {
+    if (err) {
+      log.info("get redis error in getorders");
+      log.info(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result !== null && result !== "") {
+      let multi = ctx.cache.multi();
+      for (let order_key of result) {
+        multi.hget(order_entities, order_key);
+      }
+      multi.exec((err2, replies) => {
+        if (err2 || replies === null || replies === "") {
+          rep({ code: 404, msg: "not found" });
+        } else {
+          let user_orders = replies.map(e => JSON.parse(e));
+          let driver_orders = user_orders.filter(order => order !== null && order["type = 1"] && order["vehicle"]["id"] === vid)
+          let drivers = [];
+          for (let driver_order of driver_orders) {
+            for (let d of driver_order["drivers"]) {
+              drivers.push(d);
+            }
+          }
+          if (drivers.length === 0) {
+            rep({ code: 404, msg: "not found" });
+          } else {
+            let nowDate = (new Date()).getTime() + 28800000;
+            rep({ code: 200, data: drivers });
+          }
+        }
+      });
+    } else {
+      rep({ code: 404, msg: "not found" });
+    }
+  });
+});
+
 
 // 下计划单
 svc.call("placeAnPlanOrder", permissions, (ctx: Context, rep: ResponseFunction, vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any) => {
