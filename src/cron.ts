@@ -5,10 +5,7 @@ import { servermap, triggermap } from "hive-hostmap";
 import * as schedule from "node-schedule";
 import { verify, uuidVerifier, stringVerifier, arrayVerifier, objectVerifier, booleanVerifier } from "hive-verify";
 import { createClient, RedisClient } from "redis";
-const pg = require("pg");
-const ResultSet = require("pg");
-
-
+import { Pool } from "pg-pool";
 
 let log = bunyan.createLogger({
   name: "timing-cron",
@@ -39,7 +36,7 @@ let config = {
   max: 10, // max number of clients in the pool
   idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
 };
-let pool = new pg.Pool(config);
+let pool = new Pool(config);
 
 function checkEffectiveTime(start_at) {
   let startTime = start_at.getTime();
@@ -368,7 +365,7 @@ function orderInvalid() {
           if (err) {
             reject(err);
             log.info("SELECT orders err" + err);
-          } else if (result === null || result === "") {
+          } else if (result === null || result.rowCount === 0) {
             reject("404 not found");
             log.info("not found prepare effective order");
           } else {
