@@ -38,6 +38,7 @@ let config: Config = {
   cachehost: process.env["CACHE_HOST"],
   addr: "ipc:///tmp/order.ipc"
 };
+
 let processor = new Processor(config);
 let order_trigger = nanomsg.socket("pub");
 order_trigger.bind(triggermap.order);
@@ -549,40 +550,26 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
   });
 });
 
-function createGroup(domain: string, order: Object, uid: string) {
-  return new Promise<any>((resolve, reject) => {
-    let vehicle = order["vehicle"];
-    let name: string = vehicle["owner"].name;
-    let identity_no: string = vehicle["owner"].identity_no;
-    let g_name: string;
-    let apportion: number = 0.20;
-    if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
-      g_name = name + "先生";
-    } else {
-      g_name = name + "女士";
-    }
-    let p = rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
-    p.then(r => {
-      resolve(r);
-    }).catch((e: Error) => {
-      reject(e);
-    });
-  });
+function createGroup(domain: string, order: Object, uid: string): Promise<any> {
+  let vehicle = order["vehicle"];
+  let name: string = vehicle["owner"].name;
+  let identity_no: string = vehicle["owner"].identity_no;
+  let g_name: string;
+  let apportion: number = 0.20;
+  if (parseInt(identity_no.substr(16, 1)) % 2 === 1) {
+    g_name = name + "先生";
+  } else {
+    g_name = name + "女士";
+  }
+  return rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
 }
 
-function createAccount(domain: string, order: Object, uid: string) {
-  return new Promise<any>((resolve, reject) => {
-    const vid = order["vehicle"]["id"];
-    const balance = order["summary"];
-    const balance0 = balance * 0.2;
-    const balance1 = balance * 0.8;
-    let p = rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1);
-    p.then(r => {
-      resolve(r);
-    }).catch((e: Error) => {
-      reject(e);
-    });
-  });
+function createAccount(domain: string, order: Object, uid: string): Promise<any> {
+  const vid = order["vehicle"]["id"];
+  const balance = order["summary"];
+  const balance0 = balance * 0.2;
+  const balance1 = balance * 0.8;
+  return rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1);
 }
 
 processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
