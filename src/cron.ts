@@ -438,6 +438,33 @@ function update_group_recursive(db, done, nowdate, groups, gids, acc, cb) {
         }
       });
     });
+
+    let gupdateredis = new Promise<void>((resolve, reject) => {
+      redis.hget("group_entities", gid, (err, result) => {
+        if (err) {
+          reject(err);
+        } else if (result === null || result === "") {
+          reject("group not found");
+        } else {
+          let group_entities = JSON.parse(result);
+          group_entities["apportion"] = groups["gid"]["apportion"];
+          redis.hset("group_entities", gid, (err1, result1) => {
+            if (err1) {
+              reject(err1);
+            } else {
+              resolve();
+            }
+          });
+        }
+      });
+    });
+    let ps = [gupdategroup, gupdateredis];
+    async_serial<void>(ps, [], () => {
+      update_group_recursive(db, done, nowdate, groups, gids, acc, cb);
+    }, (e: Error) => {
+      update_group_recursive(db, done, nowdate, groups, gids, acc, cb);
+      log.info(e);
+    });
   }
 }
 
@@ -488,6 +515,7 @@ function updateGroupScale() {
             }
             let nowdate = new Date();
             update_group_recursive(db, done, nowdate, groups, gids.map(gid => gid), [], () => {
+              update_accout_recursive(db,done,nowdate)
             });
           }
         });
