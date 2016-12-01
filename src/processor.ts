@@ -9,6 +9,8 @@ import * as nanomsg from "nanomsg";
 import * as http from "http";
 import * as queryString from "querystring";
 import { CustomerMessage } from "recommend-library";
+import { run as trigger_run } from "./order-trigger";
+
 let log = bunyan.createLogger({
   name: "order-processor",
   streams: [
@@ -787,7 +789,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                         multi.zadd("sale-orders", created_at, order_id);
                         multi.zadd("orders", created_at, order_id);
                         multi.zadd("orders-" + uid, created_at, order_id);
-                        multi.hset("vehicle-order", vid, order_id);
+                        multi.hset("vid-soid", vid, order_id);
                         multi.hset("orderid-vid", order_id, vid);
                         multi.hset("order-entities", order_id, JSON.stringify(order));
                         multi.exec((err3, replies) => {
@@ -1845,7 +1847,7 @@ function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid:
                 const vid = order["vehicle"]["vid"];
                 const updated_at = order.updated_at.getTime();
                 multi.zadd("orders", updated_at, oid);
-                multi.hset("vehicle-order", vid, oid);
+                multi.hset("vid-soid", vid, oid);
                 multi.hset("orderid-vid", oid, vid);
                 multi.hset("order-entities", oid, JSON.stringify(order));
                 multi.zadd("sale-orders", updated_at, oid);
@@ -1980,5 +1982,7 @@ function trim(str: string) {
 }
 
 processor.run();
+
+trigger_run();
 
 log.info("Start processor at " + config.addr);

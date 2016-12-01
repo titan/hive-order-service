@@ -5,7 +5,7 @@ import { servermap, triggermap } from "hive-hostmap";
 import * as schedule from "node-schedule";
 import { verify, uuidVerifier, stringVerifier, arrayVerifier, objectVerifier, booleanVerifier } from "hive-verify";
 import { createClient, RedisClient } from "redis";
-import { Pool } from "pg-pool";
+import { Pool } from "pg";
 
 let log = bunyan.createLogger({
   name: "timing-cron",

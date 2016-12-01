@@ -561,7 +561,7 @@ svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid:
   })) {
     return;
   }
-  ctx.cache.hget("vehicle-order", vid, function (err, result) {
+  ctx.cache.hget("vid-soid", vid, function (err, result) {
     log.info("===========" + result);
     if (err) {
       log.info(err);
