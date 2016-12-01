@@ -23,17 +23,14 @@ $(PROCESSOR): $(TMPPROCESSOR)
 $(CRON): $(TMPCRON)
 	mv $< $@
 
-$(SRCDIR)/server.ts: node_modules typings
+$(SRCDIR)/server.ts: node_modules
 
-$(SRCDIR)/processor.ts: node_modules typings
+$(SRCDIR)/processor.ts: node_modules
 
-$(SRCDIR)/cron.ts: node_modules typings
+$(SRCDIR)/cron.ts: node_modules
 
 node_modules:
 	$(NPM) install
-
-typings:
-	typings install
 
 clean:
 	rm -rf $(DISTDIR)

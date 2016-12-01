@@ -1,7 +1,6 @@
 import { Server, Config, Context, ResponseFunction, Permission, rpc, wait_for_response } from "hive-server";
 import { servermap } from "hive-hostmap";
 import * as Redis from "redis";
-import * as nanomsg from "nanomsg";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
@@ -219,7 +218,7 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         multi.hget(order_entities, order_key);
       }
       multi.exec((err2, replies) => {
-        if (err2 || replies == null || replies == "") {
+        if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
           let nowDate = (new Date()).getTime() + 28800000;
@@ -307,7 +306,7 @@ svc.call("getDriverForVehicle", permissions, (ctx: Context, rep: ResponseFunctio
         multi.hget(order_entities, order_key);
       }
       multi.exec((err2, replies) => {
-        if (err2 || replies === null || replies === "") {
+        if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
           let user_orders = replies.map(e => JSON.parse(e));
@@ -501,7 +500,7 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       multi.exec((err1, replies1) => {
         if (err1) {
           log.error(err1, "query error");
-        } else if (replies1 === null || replies1 == "") {
+        } else if (replies1 === null || replies1.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
           rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });

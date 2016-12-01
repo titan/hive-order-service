@@ -1,6 +1,4 @@
 import { Processor, Config, ModuleFunction, DoneFunction, rpc, async_serial, async_serial_ignore } from "hive-processor";
-import * as nanomsg from "nanomsg";
-import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
 import { servermap, triggermap } from "hive-hostmap";
@@ -515,7 +513,7 @@ function updateGroupScale() {
             }
             let nowdate = new Date();
             update_group_recursive(db, done, nowdate, groups, gids.map(gid => gid), [], () => {
-              update_accout_recursive(db,done,nowdate)
+              //update_account_recursive(db,done,nowdate)
             });
           }
         });

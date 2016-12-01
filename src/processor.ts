@@ -1,5 +1,5 @@
 import { Processor, Config, ModuleFunction, DoneFunction, rpc, async_serial, async_serial_ignore } from "hive-processor";
-import { Client as PGClient, ResultSet } from "pg";
+import { Client as PGClient, QueryResult } from "pg";
 import { createClient, RedisClient } from "redis";
 import { servermap, triggermap } from "hive-hostmap";
 import * as bunyan from "bunyan";
@@ -85,7 +85,7 @@ function update_sale_order_items_recursive(db, done, prices, piids, order_id, ac
     } else {
         let piid = piids.shift();
         let price = prices.shift();
-        db.query("UPDATE order_items SET price = $1 WHERE piid = $2 AND oid = $3", [price, piid, order_id], (err: Error, result: ResultSet) => {
+        db.query("UPDATE order_items SET price = $1 WHERE piid = $2 AND oid = $3", [price, piid, order_id], (err: Error, result: QueryResult) => {
             if (err) {
                 log.info(err);
                 db.query("ROLLBACK", [], (err: Error) => {
@@ -133,7 +133,7 @@ function insert_plan_order_recursive(db, done, order_id, args1, pids, acc/* plan
     } else {
         let ext_id = uuid.v1();
         let pid = pids.shift();
-        db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, args1.pmid, args1.promotion, pid, args1.qid, args1.service_ratio, args1.expect_at], (err: Error, result: ResultSet) => {
+        db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, args1.pmid, args1.promotion, pid, args1.qid, args1.service_ratio, args1.expect_at], (err: Error, result: QueryResult) => {
             if (err) {
                 log.info(err);
                 db.query("ROLLBACK", [], (err: Error) => {
@@ -167,7 +167,7 @@ function insert_driver_order_recursive(db, done, order_id, args2, dids, acc/* pl
         });
     } else {
         let did = dids.shift();
-        db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did], (err: Error, result: ResultSet) => {
+        db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did], (err: Error, result: QueryResult) => {
             if (err) {
                 log.info(err);
                 db.query("ROLLBACK", [], (err: Error) => {
@@ -268,7 +268,7 @@ processor.call("placeAnPlanOrder", (db: PGClient, cache: RedisClient, done: Done
         });
         for (const pid of Object.keys(plans)) {
             const porderex = new Promise<void>((resolve, reject) => {
-                db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at, vehicle_real_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at, v_value], (err: Error, result: ResultSet) => {
+                db.query("INSERT INTO plan_order_ext(oid, pmid, promotion, pid, qid, service_ratio, expect_at, vehicle_real_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, pmid, promotion, pid, qid, service_ratio, expect_at, v_value], (err: Error, result: QueryResult) => {
                     if (err) {
                         reject(err);
                     } else {
@@ -365,7 +365,7 @@ processor.call("updateOrderNo", (db: PGClient, cache: RedisClient, done: DoneFun
             });
         } else {
             let order_id = result;
-            db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, order_id], (err: Error, result: ResultSet) => {
+            db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, order_id], (err: Error, result: QueryResult) => {
                 if (err) {
                     log.info(err);
                     cache.setex(cbflag, 30, JSON.stringify({
@@ -449,7 +449,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
             });
         } else {
             // vid, dids, summary, payment
-            db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error, result: ResultSet) => {
+            db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment], (err: Error, result: QueryResult) => {
                 if (err) {
                     log.error(err, " insert orders  error in placeAnDriverOrder");
                     cache.setex(cbflag, 30, JSON.stringify({
@@ -460,7 +460,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
                     });
                     return;
                 } else {
-                    db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: ResultSet) => {
+                    db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, driver_data], (err: Error, result: QueryResult) => {
                         if (err) {
                             log.error(err, "insert info order_events error in placeAnDriverOrder");
                             cache.setex(cbflag, 30, JSON.stringify({
@@ -595,7 +595,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
     let pquery = null;
     if (state_code === 2) {
         pquery = new Promise<void>((resolve, reject) => {
-            db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id], (err: Error, result: ResultSet) => {
+            db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id], (err: Error, result: QueryResult) => {
                 if (err) {
                     log.info(err);
                     reject(err);
@@ -606,7 +606,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
         });
     } else {
         pquery = new Promise<void>((resolve, reject) => {
-            db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id], (err: Error, result: ResultSet) => {
+            db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id], (err: Error, result: QueryResult) => {
                 if (err) {
                     log.info(err);
                     reject(err);
@@ -733,7 +733,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                         });
                     });
                 } else {
-                    db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: ResultSet) => {
+                    db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1, $2, $3, $4)", [event_id, order_id, uid, sale_data], (err: Error, result: QueryResult) => {
                         if (err) {
                             db.query("ROLLBACK", [], (err1: Error) => {
                                 log.error(err, "insert into order_events error");
@@ -745,7 +745,7 @@ processor.call("placeAnSaleOrder", (db: PGClient, cache: RedisClient, done: Done
                                 });
                             });
                         } else {
-                            db.query("INSERT INTO sale_order_ext(oid, pid, qid, opr_level) VALUES($1, $2, $3, $4)", [order_id, pid, qid, opr_level], (err: Error, result: ResultSet) => {
+                            db.query("INSERT INTO sale_order_ext(oid, pid, qid, opr_level) VALUES($1, $2, $3, $4)", [order_id, pid, qid, opr_level], (err: Error, result: QueryResult) => {
                                 if (err) {
                                     db.query("ROLLBACK", [], (err1: Error) => {
                                         log.error(err, "insert into sale_order_ext error");
@@ -859,7 +859,7 @@ processor.call("updateSaleOrder", (db: PGClient, cache: RedisClient, done: DoneF
                 done();
             });
         } else {
-            db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: ResultSet) => {
+            db.query("UPDATE orders SET summary = $1,payment = $2,updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id], (err: Error, result: QueryResult) => {
                 if (err) {
                     log.info(err);
                     log.info("err,updateOrderState error");
@@ -1474,7 +1474,7 @@ function select_order_item_recursive(db, done, piids, acc, cb) {
         cb(acc);
     } else {
         let piid = piids.shift();
-        db.query("SELECT id,price,oid FROM order_items WHERE id = $1 AND deleted = FALSE", [piid], (err: Error, result: ResultSet) => {
+        db.query("SELECT id,price,oid FROM order_items WHERE id = $1 AND deleted = FALSE", [piid], (err: Error, result: QueryResult) => {
             if (err) {
                 log.info(err);
                 db.query("ROLLBACK", [], (err: Error) => {
@@ -1496,7 +1496,7 @@ function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string)
 
 function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: ResultSet) => {
+        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (e: Error, result: QueryResult) => {
             if (e) {
                 reject(e);
             } else {
@@ -1594,7 +1594,7 @@ function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string): 
 
 function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: QueryResult) => {
             if (err) {
                 log.info("==================" + err);
                 reject(err);
@@ -1747,7 +1747,7 @@ function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string): 
 
 function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: ResultSet) => {
+        db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : [], (err: Error, result: QueryResult) => {
             if (err) {
                 reject(err);
             } else {
@@ -1879,7 +1879,7 @@ function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid:
 
 function refresh_underwrite(db: PGClient, cache: RedisClient, domain: string) {
     return new Promise<void>((resolve, reject) => {
-        db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u INNER JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: ResultSet) => {
+        db.query("SELECT u.id AS u_id, u.oid AS u_oid, u.opid AS u_opid, u.plan_time AS u_plan_time, u.real_time AS u_real_time, u.validate_place AS u_validate_place, u.validate_update_time AS u_validate_update_time, u.real_place AS u_real_place, u.real_update_time AS u_real_update_time, u.certificate_state AS u_certificate_state, u.problem_type AS u_problem_type, u.problem_description AS u_problem_description, u.note AS u_note, u.note_update_time AS u_note_update_time, u.underwrite_result AS u_underwrite_result, u.result_update_time AS u_result_update_time, u.created_at AS u_created_at, u.updated_at AS u_updated_at, up.photo AS up_photo FROM underwrites AS u INNER JOIN underwrite_photos AS up ON u.id= up.uwid WHERE u.deleted= FALSE AND up.deleted= FALSE", [], (err: Error, result: QueryResult) => {
             if (err) {
                 reject(err);
             } else {
