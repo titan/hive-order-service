@@ -111,7 +111,7 @@ function order_filter_recursive(cache, entity_key, key, keys, cursor, len, sorde
   if (key) {
     cache.hget(order_entities, key, function (err, result) {
       let order = JSON.parse(result);
-      if (order["vehicle"]) {
+      if (order && order["vehicle"] && order["vehicle"]["owner"]) {
         if (checkArgs(order["vehicle"]["owner"]["name"], sownername) && checkArgs(order["vehicle"]["owner"]["phone"], sphone) && checkArgs(order["vehicle"]["license_no"], slicense_no) && checkArgs(order["state"], sstate)) {
           if (checkArgs(order["order_id"], sorder_id) && filterDate(order["created_at"], sbegintime, sendtime)) {
             acc.push(order);
@@ -569,7 +569,7 @@ svc.call("getSaleOrder", permissions, (ctx: Context, rep: ResponseFunction, vid:
       rep({ code: 500, msg: err.message });
     } else if (result) {
       ctx.cache.hget(order_entities, result, function (err1, result1) {
-        if (err1 || result1 == null) {
+        if (err1) {
           log.info(err1 + "get order_entities err in getOrderState");
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
