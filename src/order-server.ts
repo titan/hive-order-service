@@ -264,3 +264,22 @@ server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计
   ctx.publish(pkt);
   wait_for_response(ctx.cache, callback, rep);
 });
+
+server.call("placeAnDriverOrder", allowAll, "用户下司机划订单", "用户下司机订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, dids: any, summary: number, payment: number) => {
+  log.info(`placeAnDriverOrder, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}`);
+  if (!verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const callback = uuid.v1();
+  const uid = ctx.uid;
+  const domain = ctx.domain;
+  const args = [domain, uid, vid, dids, summary, payment, callback];
+  const pkt: CmdPacket = { cmd: "placeAnDriverOrder", args: [domain, uid, vid, dids, summary, payment, callback] };
+  ctx.publish(pkt);
+  wait_for_response(ctx.cache, callback, rep);
+});
