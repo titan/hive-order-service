@@ -44,8 +44,8 @@ export function run () {
     const vid = obj["vid"];
     const vehicle = obj["vehicle"];
     log.info(`Got vehicle ${vid} from trigger`);
-    try {
-      (async () => {
+    (async () => {
+      try {
         const poid: string = await cache.hgetAsync("vid-poid", vid);
         const soid: string = await cache.hgetAsync("vid-soid", vid);
         const oids: string[] = [];
@@ -59,17 +59,18 @@ export function run () {
           const multi = cache.multi();
           for (const oid of oids) {
             log.info(`update order ${oid} with vehicle ${vid}`);
-            const order = await cache.hgetAsync("order-entities", oid);
+            const orderstr : string = await cache.hgetAsync("order-entities", oid);
+            const order = JSON.parse(orderstr);
             order["vehicle"] = vehicle;
-            multi.hset("order-entities", oid, order);
+            multi.hset("order-entities", oid, JSON.stringify(order));
           }
           await multi.execAsync();
           log.info(`update vehicle ${vid} of orders done`);
         }
-      })();
-    } catch (e) {
-      log.error(e);
-    }
+      } catch (e) {
+        log.error(e);
+      }
+    })();
   });
   log.info(`order-trigger is running on ${process.env["VEHICLE-TRIGGER"]}`);
 }
