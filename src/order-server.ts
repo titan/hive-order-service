@@ -442,3 +442,21 @@ server.call("placeAnSaleOrder", allowAll, "下第三方单", "下第三方单", 
   ctx.publish(pkt);
   wait_for_response(ctx.cache, callback, rep);
 });
+
+// 修改第三方订单
+server.call("updateSaleOrder", allowAll, "修改第三方单", "修改第三方单", (ctx: ServerContext, rep: ((result: any) => void), order_id: string, items: any, summary: number, payment: number) => {
+  log.info(`updateSaleOrder, order_id: ${order_id}, items: ${JSON.stringify(items)}, summary: ${summary}, payment: ${payment}`);
+  if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const domain = ctx.domain;
+  const callback = uuid.v1();
+  const pkt: CmdPacket = { cmd: "updateSaleOrder", args: [domain, order_id, items, summary, payment, callback] };
+  ctx.publish(pkt);
+  wait_for_response(ctx.cache, callback, rep);
+});
