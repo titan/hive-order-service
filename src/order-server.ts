@@ -201,28 +201,6 @@ server.call("getOrderState", allowAll, "获取订单状态", "获得订单的状
   });
 });
 
-server.call("getDriverOrders", allowAll, "获取司机订单", "获得司机订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
-  log.info(`getDriverOrders, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
-  })) {
-    return;
-  }
-  ctx.cache.hget("driver-entities-", vid, function (err, result) {
-    if (err) {
-      log.error(err);
-      rep({ code: 500, msg: err.message });
-    } else if (result == null) {
-      rep({ code: 404, msg: "Order not found" });
-    } else {
-      rep({ code: 200, data: JSON.parse(result) });
-    }
-  });
-});
-
 server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "获得车辆的驾驶人信息", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
   log.info(`getDriverForVehicle, vid: ${vid}`);
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
