@@ -162,7 +162,7 @@ server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的�
         if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
-          let nowDate = (new Date()).getTime() + 28800000;
+          const nowDate = (new Date()).getTime() + 28800000;
           rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
         }
       });
@@ -219,6 +219,51 @@ server.call("getDriverOrders", allowAll, "获取司机订单", "获得司机订�
       rep({ code: 404, msg: "Order not found" });
     } else {
       rep({ code: 200, data: JSON.parse(result) });
+    }
+  });
+});
+
+server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "获得车辆的驾驶人信息", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
+  log.info(`getDriverForVehicle, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.zrange(`orders-${ctx.uid}`, 0, -1, function (err, result) {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result !== null && result.length > 0) {
+      const multi = ctx.cache.multi();
+      for (const order_key of result) {
+        multi.hget("order-entities", order_key);
+      }
+      multi.exec((err2, replies) => {
+        if (err2 || replies === null || replies.length === 0) {
+          rep({ code: 404, msg: "not found" });
+        } else {
+          const user_orders = replies.map(e => JSON.parse(e));
+          const driver_orders = user_orders.filter(order => order !== null && order["type"] === 1 && order["vehicle"]["id"] === vid);
+          const drivers = [];
+          for (const driver_order of driver_orders) {
+            for (const d of driver_order["drivers"]) {
+              drivers.push(d);
+            }
+          }
+          if (drivers.length === 0) {
+            rep({ code: 404, msg: "Drivers not found" });
+          } else {
+            const nowDate = (new Date()).getTime() + 28800000;
+            rep({ code: 200, data: drivers });
+          }
+        }
+      });
+    } else {
+      rep({ code: 404, msg: "Driver orders not found" });
     }
   });
 });
