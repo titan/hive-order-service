@@ -354,3 +354,37 @@ server.call("updateOrderNo", allowAll, "更新订单编号", "更新订单编号
     }
   });
 });
+
+// 通过vid获取已生效计划单
+server.call("getPlanOrderByVehicle", allowAll, "通过vid获取已生效计划单", "通过vid获取已生效计划单", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
+  log.info(`getPlanOrderByVehicle, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("vid-poid", vid, function (err, result) {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result === null) {
+      log.info("No plan order for the vid");
+      rep({ code: 404, msg: "Order not found" });
+    } else {
+      ctx.cache.hget("order-entities", result, function (err1, result1) {
+        if (err1) {
+          log.error(err1);
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
+          let nowDate = (new Date()).getTime() + 28800000;
+          rep({ code: 200, data: JSON.parse(result1), nowDate: nowDate });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
+        }
+      });
+    }
+  });
+});
