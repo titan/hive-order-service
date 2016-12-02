@@ -388,3 +388,37 @@ server.call("getPlanOrderByVehicle", allowAll, "通过vid获取已生效计划�
     }
   });
 });
+
+// 通过vid获取司机单
+server.call("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "通过vid获取司机单", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
+  log.info(`getDriverOrderByVehicle, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("vid-doid", vid, function (err, result) {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result === null) {
+      log.info("No driver order for the vid");
+      rep({ code: 404, msg: "Order not found" });
+    } else {
+      let multi = ctx.cache.multi();
+      multi.hget("order-entities", result);
+      multi.exec((err1, replies1) => {
+        if (err1) {
+          log.error(err1);
+        } else if (replies1 === null || replies1.length === 0) {
+          rep({ code: 404, msg: "Orders not found" });
+        } else {
+          rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
+        }
+      });
+    }
+  });
+});
