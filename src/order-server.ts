@@ -284,7 +284,6 @@ server.call("placeAnDriverOrder", allowAll, "用户下司机划订单", "用户�
   wait_for_response(ctx.cache, callback, rep);
 });
 
-// 更新订单状态
 server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状态", (ctx: ServerContext, rep: ((result: any) => void), uid: string, order_no: string, state_code: number, state: string) => {
   log.info(`updateOrderState, uid: ${uid}, order_no: ${order_no}, state_code: ${state_code}, state: ${state}`);
   if (!verify([uuidVerifier("uid", uid), stringVerifier("order_no", order_no), numberVerifier("state_code", state_code), stringVerifier("state", state)], (errors: string[]) => {
@@ -325,4 +324,33 @@ server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状
     }
   })();
 
+});
+
+server.call("updateOrderNo", allowAll, "更新订单编号", "更新订单编号", (ctx: ServerContext, rep: ((result: any) => void), order_no: string) => {
+  log.info(`updateOrderNo, order_no: ${order_no}`);
+  if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.incr("order-no", (err, strNo) => {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (strNo) {
+      const new_no = order_no.substring(0, 14);
+      const strno = String(strNo);
+      const no: string = formatNum(strno, 7);
+      const new_order_no = new_no + no;
+      const callback = uuid.v1();
+      const pkt: CmdPacket = { cmd: "updateOrderNo", args: [order_no, new_order_no, callback] };
+      ctx.publish(pkt);
+      wait_for_response(ctx.cache, callback, rep);
+    } else {
+      rep({ code: 404, msg: "Order no not found" });
+    }
+  });
 });
