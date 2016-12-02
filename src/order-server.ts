@@ -115,3 +115,25 @@ server.call("getAllOrders", allowAll, "获取所有订单", "可以根据条件�
   })();
 });
 
+
+server.call("getOrder", allowAll, "获取订单详情", "获得订单详情", (ctx: ServerContext, rep: ((result: any) => void), oid: string) => {
+  log.info(`getOrder oid: ${oid}`);
+  if (!verify([uuidVerifier("oid", oid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("order-entities", oid, (err, result) => {
+    if (err) {
+      rep({ code: 500, msg: err });
+    } else if (result && result !== "") {
+      const nowDate = (new Date()).getTime() + 28800000;
+      rep({ code: 200, data: JSON.parse(result), nowDate: nowDate });
+    } else {
+      rep({ code: 404, msg: "Order not found" });
+    }
+  });
+});
