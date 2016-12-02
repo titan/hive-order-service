@@ -443,7 +443,6 @@ server.call("placeAnSaleOrder", allowAll, "下第三方单", "下第三方单", 
   wait_for_response(ctx.cache, callback, rep);
 });
 
-// 修改第三方订单
 server.call("updateSaleOrder", allowAll, "修改第三方单", "修改第三方单", (ctx: ServerContext, rep: ((result: any) => void), order_id: string, items: any, summary: number, payment: number) => {
   log.info(`updateSaleOrder, order_id: ${order_id}, items: ${JSON.stringify(items)}, summary: ${summary}, payment: ${payment}`);
   if (!verify([uuidVerifier("order_id", order_id)], (errors: string[]) => {
@@ -459,4 +458,35 @@ server.call("updateSaleOrder", allowAll, "修改第三方单", "修改第三方�
   const pkt: CmdPacket = { cmd: "updateSaleOrder", args: [domain, order_id, items, summary, payment, callback] };
   ctx.publish(pkt);
   wait_for_response(ctx.cache, callback, rep);
+});
+
+server.call("getSaleOrder", allowAll, "根据vid获取第三方保险", "根据vid获取第三方保险", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
+  log.info(`getSaleOrder, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget("vid-soid", vid, function (err, result) {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
+      ctx.cache.hget("order-entities", result, function (err1, result1) {
+        if (err1) {
+          log.error(err1);
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
+          rep({ code: 200, data: JSON.parse(result1) });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
+        }
+      });
+    } else {
+      rep({ code: 404, msg: "Order not found" });
+    }
+  });
 });
