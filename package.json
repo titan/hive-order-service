@@ -6,6 +6,7 @@
     "@types/redis": "^0.12.33",
     "bunyan": "^1.8.1",
     "hive-hostmap": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-hostmap.git",
+    "hive-service": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-service.git",
     "hive-processor": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-processor.git",
     "hive-server": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-server.git",
     "hive-verify": "git+http://git.fengchaohuzhu.com:10080/feiluo/hive-verify.git",
