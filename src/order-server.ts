@@ -128,12 +128,47 @@ server.call("getOrder", allowAll, "获取订单详情", "获得订单详情", (c
   }
   ctx.cache.hget("order-entities", oid, (err, result) => {
     if (err) {
+      log.error(err);
       rep({ code: 500, msg: err });
     } else if (result && result !== "") {
       const nowDate = (new Date()).getTime() + 28800000;
       rep({ code: 200, data: JSON.parse(result), nowDate: nowDate });
     } else {
       rep({ code: 404, msg: "Order not found" });
+    }
+  });
+});
+
+
+server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的所有订单", (ctx: ServerContext, rep: ((result: any) => void), offset: number, limit: number) => {
+  log.info(`getOrders, offset: ${offset}, limit: ${limit}`);
+  if (!verify([numberVerifier("offset", offset), numberVerifier("limit", limit)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.zrange(`orders-${ctx.uid}`, offset, limit, function (err, result) {
+    if (err) {
+      log.error(err);
+      rep({ code: 500, msg: err.message });
+    } else if (result !== null && result.length === 0) {
+      const multi = ctx.cache.multi();
+      for (const oid of result) {
+        multi.hget("order-entities", oid);
+      }
+      multi.exec((err2, replies) => {
+        if (err2 || replies === null || replies.length === 0) {
+          rep({ code: 404, msg: "not found" });
+        } else {
+          let nowDate = (new Date()).getTime() + 28800000;
+          rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
+        }
+      });
+    } else {
+      rep({ code: 404, msg: "not found" });
     }
   });
 });
