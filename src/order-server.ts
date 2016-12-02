@@ -422,3 +422,23 @@ server.call("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "�
     }
   });
 });
+
+server.call("placeAnSaleOrder", allowAll, "下第三方单", "下第三方单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, pid: string, qid: string, items: any, summary: number, payment: number, opr_level: number) => {
+  log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d, opr_level: %d", vid, pid, qid, summary, payment, opr_level);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const uid = ctx.uid;
+  const order_id = uuid.v1();
+  const callback = order_id;
+  const domain = ctx.domain;
+  const pkt: CmdPacket = { cmd: "placeAnSaleOrder", args: [uid, domain, order_id, vid, pid, qid, items, summary, payment, opr_level, callback] };
+  ctx.publish(pkt);
+  wait_for_response(ctx.cache, callback, rep);
+});
