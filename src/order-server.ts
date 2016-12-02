@@ -6,7 +6,7 @@ import * as uuid from "node-uuid";
 import * as http from "http";
 import { verify, uuidVerifier, stringVerifier, numberVerifier } from "hive-verify";
 
-declare module 'redis' {
+declare module "redis" {
   export interface RedisClient extends NodeJS.EventEmitter {
     hgetAsync(key: string, field: string): Promise<any>;
     hincrbyAsync(key: string, field: string, value: number): Promise<any>;
@@ -93,7 +93,7 @@ server.call("getAllOrders", allowAll, "获取所有订单", "可以根据条件�
 
         if (order_id && order["order_id"] !== order_id) continue;
 
-        const created_at : Date = new Date(order["created_at"]);
+        const created_at: Date = new Date(order["created_at"]);
 
         if (begin_time && begin_time.getTime() > created_at.getTime()) continue;
 
@@ -139,7 +139,6 @@ server.call("getOrder", allowAll, "获取订单详情", "获得订单详情", (c
   });
 });
 
-
 server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的所有订单", (ctx: ServerContext, rep: ((result: any) => void), offset: number, limit: number) => {
   log.info(`getOrders, offset: ${offset}, limit: ${limit}`);
   if (!verify([numberVerifier("offset", offset), numberVerifier("limit", limit)], (errors: string[]) => {
@@ -169,6 +168,35 @@ server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的�
       });
     } else {
       rep({ code: 404, msg: "not found" });
+    }
+  });
+});
+
+server.call("getOrderState", allowAll, "获取订单状态", "获得订单的状态", (ctx: ServerContext, rep: ((result: any) => void), vid: string, qid: string) => {
+  log.info(`getOrderState, vid: ${vid}, qid: ${qid}`);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  ctx.cache.hget(`order-vid-${vid}`, qid, (err, result) => {
+    if (err) {
+      rep({ code: 500, msg: err.message });
+    } else if (result) {
+      ctx.cache.hget("order-entities", result, function (err1, result1) {
+        if (err1) {
+          rep({ code: 500, msg: err1.message });
+        } else if (result1) {
+          rep({ code: 200, data: JSON.parse(result1) });
+        } else {
+          rep({ code: 404, msg: "Order not found" });
+        }
+      });
+    } else {
+      rep({ code: 404, msg: "Order not found" });
     }
   });
 });
