@@ -245,3 +245,22 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
     }
   });
 });
+
+server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
+  log.info(`placeAnPlanOrder vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}`);
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("promotion", promotion), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const uid = ctx.uid;
+  const order_id = uuid.v1();
+  const callback = order_id;
+  const domain = ctx.domain;
+  const pkt: CmdPacket = { cmd: "placeAnPlanOrder", args: [domain, uid, order_id, vid, plans, qid, pmid, promotion, service_ratio, summary, payment, v_value, expect_at, callback] };
+  ctx.publish(pkt);
+  wait_for_response(ctx.cache, callback, rep);
+});
