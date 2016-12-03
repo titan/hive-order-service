@@ -199,7 +199,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
 }
 
 processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date, cbflag: string) => {
-  log.info(`placeAnPlanOrder, domain: ${domain}, uid: ${uid}, order_id: ${order_id}, vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}a, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}, cbflag: ${cbflag}`);
+  log.info(`placeAnPlanOrder, domain: ${domain}, uid: ${uid}, order_id: ${order_id}, vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}, cbflag: ${cbflag}`);
   const db: PGClient = ctx.db;
   const cache: RedisClient = ctx.cache;
   const done = ctx.done;
@@ -331,4 +331,117 @@ processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_or
       });
     }
   })();
+});
+
+async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
+  const result = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.pid AS e_pid FROM driver_order_ext AS e LEFT JOIN orders AS o ON o.id = e.oid WHERE o.deleted = FALSE AND e.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
+  const orders = {};
+  for (const row of result.rows) {
+    if (orders.hasOwnProperty(row.o_id)) {
+      orders[row.o_id]["dids"].push(row.e_pid);
+    } else {
+      const order = {
+        order_id: row.o_id,
+        id: trim(row.o_no),
+        type: row.o_type,
+        state_code: row.o_state_code,
+        state: trim(row.o_state),
+        summary: row.o_summary,
+        payment: row.o_payment,
+        start_at: row.o_start_at,
+        stop_at: row.o_stop_at,
+        vid: row.o_vid,
+        vehicle: null,
+        drivers: [],
+        dids: [row.e_pid],
+        created_at: row.o_created_at,
+        updated_at: row.o_created_at
+      };
+      orders[row.o_id] = order;
+    }
+  }
+
+  const oids = Object.keys(orders);
+  const pvs = oids.map(oid => rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", orders[oid].vid)); // fetch vehicles in parallel
+  const vreps = await Promise.all(pvs);
+  const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+  for (const vehicle of vehicles) {
+    for (const oid of oids) {
+      const order = orders[oid];
+      if (vehicle["id"] === order.vid) {
+        order.vehicle = vehicle;
+      }
+    }
+  }
+  const pds = oids.reduce((acc, oid) => {
+    const order = orders[oid];
+    for (const did of order.dids) {
+      const p = rpc<Object>(domain, process.env["VEHICLE"], null, "getDrivers", order.vid, did);
+      acc.push(p);
+    }
+    return acc;
+  }, []);
+  const drvreps = await Promise.all(pds);
+  const drivers = drvreps.filter(d => d["code"] === 200).map(d => d["data"]);
+  for (const driver of drivers) {
+    for (const oid of oids) {
+      const order = orders[oid];
+      for (const drv of order.drivers) {
+        if (drv === driver["id"]) {
+          order.drivers.push(driver);
+        }
+      }
+    }
+  }
+
+  const multi = cache.multi();
+  for (const oid of oids) {
+    const order = orders[oid];
+    const updated_at = order.updated_at.getTime();
+    const uid = order["uid"];
+    const vid = order["vid"];
+    multi.zadd("driver_orders", updated_at, oid);
+    multi.zadd("orders", updated_at, oid);
+    multi.hset("vid-doid", vid, JSON.stringify(order["drivers"].map(d => d["id"])));
+    multi.hset("driver-entities-", vid, JSON.stringify(order["drivers"]));
+    multi.hset("order-entities", oid, JSON.stringify(order));
+    multi.zadd("driver-orders", updated_at, oid);
+  }
+  return multi.execAsync();
+}
+
+processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid: string, vid: string, dids: string[], summary: number, payment: number, cbflag: string) => {
+  log.info(`placeAnDriverOrder, domain: ${domain}, uid: ${uid}, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}, cbflag: ${cbflag}`);
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  const order_id = uuid.v1();
+  const item_id = uuid.v1();
+  const event_id = uuid.v1();
+  const state_code = 2;
+  const state = "已支付";
+  const type = 1;
+  (async () => {
+    try {
+      await db.query("BEGIN", []);
+      await db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, "添加驾驶人"]);
+      await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment]);
+
+      for (const did of dids) {
+        await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
+      }
+      await sync_driver_orders(db, cache, domain, order_id);
+      await cache.setexAsync(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: order_id
+      }));
+    } catch (err) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }), (err, result) => {
+        done();
+      });
+    }
+  });
 });
