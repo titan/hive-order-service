@@ -445,3 +445,70 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
     }
   });
 });
+
+async function createAccount(domain: string, order: Object, uid: string): Promise<any> {
+  const vid = order["vehicle"]["id"];
+  const balance = order["summary"];
+  const balance0 = balance * 0.2;
+  const balance1 = balance * 0.8;
+  return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, balance0, balance1);
+}
+
+processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
+  log.info(`updateOrderState domain: ${domain}, uid: ${uid}, vid: ${vid}, order_id: ${order_id}, state_code: ${state_code}, state: ${state}, cbflag: ${cbflag}`);
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  const code = state_code;
+  const type1 = 1;
+  const balance: number = null;
+  const start_at = null;
+  const paid_at = new Date();
+
+  (async () => {
+    try {
+      if (state_code === 2) {
+        await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
+      } else {
+        await db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id]);
+      }
+      const orderjson = await cache.hgetAsync("order-entities", order_id);
+      if (orderjson === null || orderjson === "") {
+        await cache.setexAsync(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: `Order ${order_id} not found in order-entities`
+        }));
+        done();
+        return;
+      }
+      const order = JSON.parse(orderjson);
+      const multi = cache.multi();
+      const updated_at = (new Date()).getTime();
+      order["state_code"] = state_code;
+      order["state"] = state;
+      order["updated_at"] = paid_at;
+      if (state_code === 2) {
+        order["paid_at"] = paid_at;
+        multi.zrem("new-orders-id", order_id);
+        multi.zadd("new-pays-id", updated_at, order_id);
+      }
+      multi.hset("order-entities", order_id, JSON.stringify(order));
+      await multi.execAsync();
+      if (state_code === 2) {
+        await createAccount(domain, order, uid);
+      }
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: order_id
+      }));
+      done();
+    } catch (err) {
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }), (err, result) => {
+        done();
+      });
+    }
+  })();
+});
