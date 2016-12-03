@@ -683,3 +683,54 @@ processor.call("placeAnSaleOrder", (ctx: ProcessorContext, uid: string, domain: 
     }
   })();
 });
+
+processor.call("updateSaleOrder", (ctx: ProcessorContext, domain: any, order_id: string, items: Object[], summary: number, payment: number, cbflag: string) => {
+  log.info(`upateSaleOrder, domain: ${domain}, order_id: ${order_id}, items: ${items}, summary: ${summary}, payment: ${payment}, cbflag: ${cbflag}`);
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  const update_at = new Date();
+  const piids: Object[] = [];
+  const prices: Object[] = [];
+  for (const item in items) {
+    piids.push(item);
+    prices.push(items[item]);
+  }
+
+  (async () => {
+    try {
+      await db.query("BEGIN");
+      await db.query("UPDATE orders SET summary = $1, payment = $2, updated_at= $3 WHERE id = $4", [summary, payment, update_at, order_id]);
+
+      for (let i = 0, len = Math.min(prices.length, piids.length); i < len; i++) {
+        const piid = piids[i];
+        const price = prices[i];
+        await db.query("UPDATE order_items SET price = $1 WHERE piid = $2 AND oid = $3", [price, piid, order_id]);
+      }
+      await db.query("COMMIT");
+    } catch (err) {
+      log.error(err);
+      try {
+        await db.query("ROLLBACK");
+      } catch (err1) {
+        log.error(err1);
+      }
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: err.message
+      }), (err, result) => {
+        done();
+      });
+    }
+    try {
+      await cache.setexAsync(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: order_id
+      }));
+      await sync_sale_orders(db, cache, domain, order_id);
+      done();
+    } catch (e) {
+      log.error(e);
+    }
+  })();
+});
