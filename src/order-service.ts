@@ -1,6 +1,7 @@
 import { Service, Server, Processor, Config } from "hive-service";
 import { server } from "./order-server";
 import { processor } from "./order-processor";
+import { run as trigger_run } from "./order-trigger";
 
 const config: Config = {
   serveraddr: process.env["ORDER"],
@@ -19,3 +20,4 @@ svc.registerServer(server);
 svc.registerProcessor(processor);
 
 svc.run();
+trigger_run();

@@ -4,7 +4,7 @@ import * as bunyan from "bunyan";
 import { createClient, RedisClient} from "redis";
 import { Socket, socket } from "nanomsg";
 
-declare module 'redis' {
+declare module "redis" {
   export interface RedisClient extends NodeJS.EventEmitter {
     hgetAsync(key: string, field: string): Promise<any>;
   }
@@ -59,7 +59,7 @@ export function run () {
           const multi = cache.multi();
           for (const oid of oids) {
             log.info(`update order ${oid} with vehicle ${vid}`);
-            const orderstr : string = await cache.hgetAsync("order-entities", oid);
+            const orderstr: string = await cache.hgetAsync("order-entities", oid);
             const order = JSON.parse(orderstr);
             order["vehicle"] = vehicle;
             multi.hset("order-entities", oid, JSON.stringify(order));
