@@ -1,5 +1,6 @@
 import { Service, Server, Processor, Config } from "hive-service";
 import { server } from "./order-server";
+import { processor } from "./order-processor";
 
 const config: Config = {
   serveraddr: process.env["ORDER"],
@@ -15,5 +16,6 @@ const config: Config = {
 const svc: Service = new Service(config);
 
 svc.registerServer(server);
+svc.registerProcessor(processor);
 
 svc.run();
