@@ -78,8 +78,8 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
       const pids = {};
       pids[row.e_pid] = 0;
       const order = {
-        order_id: row.o_id,
-        id: trim(row.o_no),
+        id: row.o_id,
+        no: trim(row.o_no),
         type: row.o_type,
         state_code: row.o_state_code,
         state: trim(row.o_state),
@@ -178,7 +178,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   for (const oid of oids) {
     const order = orders[oid];
     delete order["pids"];
-    const order_no = order["id"];
+    const order_no = order["no"];
     const vid = order["vid"];
     const qid = order["qid"];
     const updated_at = order["updated_at"].getTime();
@@ -198,7 +198,8 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   return multi.execAsync();
 }
 
-processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: any, cbflag: string) => {
+processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date, cbflag: string) => {
+  log.info(`placeAnPlanOrder, domain: ${domain}, uid: ${uid}, order_id: ${order_id}, vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}a, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}, cbflag: ${cbflag}`);
   const db: PGClient = ctx.db;
   const cache: RedisClient = ctx.cache;
   const done = ctx.done;
@@ -240,6 +241,10 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
         }
       }
       await db.query("COMMIT", []);
+      await cache.setexAsync(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: { id: order_id, no: order_no }
+      })); // Notify server to return result to client
       await sync_plan_orders(db, cache, domain, uid, order_id);
     } catch (e) {
       log.error(e);
@@ -248,6 +253,12 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       } catch (e1) {
         log.error(e1);
       }
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: e.message
+      }), (err, result) => {
+        done();
+      });
       return;
     }
     done(); // release database
@@ -268,6 +279,56 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       }
     } catch (e) {
       log.error(e);
+    }
+  })();
+});
+
+processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_order_no: string, cbflag: string) => {
+  log.info(`updateOrderNo, order_no: ${order_no}, new_order_no: ${new_order_no}`);
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  (async () => {
+    try {
+      const oid = await cache.hgetAsync("orderNo-id", order_no);
+      if (oid === null || oid === "") {
+        await cache.setexAsync(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: "Order id not found"
+        }));
+        done();
+        return;
+      }
+      await db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, oid]);
+      const orderjson = await cache.hgetAsync("order-entities", oid);
+      if (orderjson === null || orderjson === "") {
+        await cache.setexAsync(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: "Order not found"
+        }));
+        done();
+        return;
+      }
+      const order = JSON.parse(orderjson);
+      order["no"] = new_order_no;
+      const multi = cache.multi();
+      multi.hdel("orderNo-id", order_no);
+      multi.hset("orderNo-id", new_order_no, oid);
+      multi.hset("order-entities", oid, JSON.stringify(order));
+      await multi.execAsync();
+      await cache.setexAsync(cbflag, 30, JSON.stringify({
+        code: 200,
+        data: new_order_no
+      }));
+      done();
+    } catch (e) {
+      log.error(e);
+      cache.setex(cbflag, 30, JSON.stringify({
+        code: 500,
+        msg: e.message
+      }), (err, result) => {
+        done();
+      });
     }
   })();
 });
