@@ -734,3 +734,33 @@ processor.call("updateSaleOrder", (ctx: ProcessorContext, domain: any, order_id:
     }
   })();
 });
+
+async function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
+  return sync_driver_orders(db, cache, domain, null);
+}
+
+async function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
+  return sync_plan_orders(db, cache, domain, null);
+}
+
+async function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
+  return sync_sale_orders(db, cache, domain, null);
+}
+
+processor.call("refresh", (ctx: ProcessorContext, domain: string) => {
+  log.info("refresh");
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  (async () => {
+    try {
+      await refresh_plan_orders(db, cache, domain);
+      await refresh_driver_orders(db, cache, domain);
+      await refresh_sale_orders(db, cache, domain);
+      log.info("refresh done!");
+      done();
+    } catch (e) {
+      log.error(e);
+    }
+  })();
+});
