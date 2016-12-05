@@ -126,7 +126,7 @@ function update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, c
         });
 
         let gupdategrouppollitems = new Promise<void>((resolve, reject) => {
-          db.query("UPDATE group_vehicles SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
+          db.query("UPDATE group_poll_items SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
             if (err) {
               reject(err);
             } else {
