@@ -107,6 +107,10 @@ function update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, c
   } else {
     let vid: string = vids.shift();
     redis.hget("vid-gid", vid, (err1, result1) => {
+      if (err1) {
+        log.info(err1);
+        update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
+      }
       if (result1 === null || result1 === "") {
         let order: Object = {};
         let domain = "mobile";
@@ -126,7 +130,7 @@ function update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, c
         });
 
         let gupdategrouppollitems = new Promise<void>((resolve, reject) => {
-          db.query("UPDATE group_vehicles SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
+          db.query("UPDATE group_poll_items SET deleted = $1 WHERE id = $2", [true, vid], (err, result) => {
             if (err) {
               reject(err);
             } else {
@@ -134,7 +138,7 @@ function update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, c
             }
           });
         });
-        let gcreate = createGroup(domain, order, order["vehicle"]["user_id"]);
+        let gcreate = createGroup("mobile", order, order["vehicle"]["user_id"]);
         let ps = [gupdategroupvehicles, gupdategrouppollitems, gcreate];
         async_serial<void>(ps, [], () => {
           update_group_vehicles_recursive(db, done, orders, nowdate, vids, acc, cb);
@@ -227,7 +231,7 @@ function get_order_uid_recursive(db, done, nowdate, orders, acc, cb) {
         get_order_uid_recursive(db, done, nowdate, orders, acc, cb);
       }
       else {
-        let p = rpc<Object>("mobile", servermap["vehicle"], null, "getVehicle", order["vid"]);
+        let p = rpc<Object>("mobile", servermap["vehicle"], "000", "getVehicle", order["vid"]);
         p.then((v) => {
           if (v["code"] === 200) {
             let vehicle = v["data"];
@@ -243,7 +247,7 @@ function get_order_uid_recursive(db, done, nowdate, orders, acc, cb) {
   }
 }
 
-//-----订单生效------
+// -----订单生效------
 let rule = new schedule.RecurrenceRule();
 rule.hour = 0;
 rule.minute = 1;
@@ -256,7 +260,7 @@ let timing = schedule.scheduleJob(rule, function () {
   });
 });
 
-//-----订单失效------
+// -----订单失效------
 let rule1 = new schedule.RecurrenceRule();
 rule1.hour = 0;
 rule1.minute = 3;
@@ -455,10 +459,101 @@ function update_group_recursive(db, done, nowdate, groups, gids, acc, cb) {
     });
     let ps = [gupdategroup, gupdateredis];
     async_serial<void>(ps, [], () => {
-      update_group_recursive(db, done, nowdate, groups, gids, acc, cb);
+      update_account_recursive(db, done, nowdate, groups[gid]["vids"].map(vid => vid), groups[gid], [], () => {
+        update_group_recursive(db, done, nowdate, groups, gids, acc, cb);
+      });
     }, (e: Error) => {
       update_group_recursive(db, done, nowdate, groups, gids, acc, cb);
       log.info(e);
+    });
+  }
+}
+
+
+function update_account_recursive(db, done, nowdate, vids, group, acc, cb) {
+  if (vids.length === 0) {
+    cb(acc);
+  } else {
+    let vid = vids.shifit();
+    const pbegin = new Promise<void>((resolve, reject) => {
+      db.query("BEGIN", [], (err: Error) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+    pbegin.then(() => {
+      const selectAccount = new Promise<Object>((resolve, reject) => {
+        db.query("SELECT id,uid, balance0, balance1 FROM accounts WHERE id = $1", [vid], (err, result) => {
+          if (err) {
+            reject(err);
+            log.info("SELECT group error");
+          } else {
+            let account: Object = {};
+            for (let row of result.rows) {
+              account = {
+                id: row.id,
+                uid: row.uid,
+                balance0: parseFloat(row.balance0),
+                balance1: parseFloat(row.balance1)
+              };
+            }
+            resolve(account);
+          }
+        });
+      });
+      selectAccount.then((account) => {
+        let balance: number = account["balance0"] * 100 + account["balance1"] * 100;
+        let newbalance0: number = parseFloat((balance * group["apportion"] / 100).toFixed(2));
+        let newbalance1: number = balance / 100 - newbalance0;
+        const updateaccount = new Promise<void>((resolve, reject) => {
+          db.query("UPDATE account SET balance0 = $1,balance1 = $2, updated_at = $3 WHERE id = $4", [newbalance0, newbalance1, nowdate, vid], (err, result) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        const updateRedis = new Promise<void>((resolve, reject) => {
+          redis.hget("wallet-entities", account["uid"], (err1, result1) => {
+            if (err1 || result1 === null) {
+              reject(err1);
+            } else {
+              let wallet_entities = JSON.parse(result1);
+              for (let acc of wallet_entities) {
+                if (acc["id"] === vid) {
+                  acc["balance0"] = newbalance0;
+                  acc["balance1"] = newbalance1;
+                }
+              }
+              redis.hset("wallet_entities", account["uid"], JSON.stringify(wallet_entities), (err2, result2) => {
+                if (err2) {
+                  reject(err2);
+                } else {
+                  resolve();
+                }
+              });
+            }
+          });
+        });
+        let ps = [updateaccount, updateRedis];
+        async_serial<void>(ps, [], () => {
+        }, (e) => {
+          db.query("ROLLBACK", [], (err: Error) => {
+            update_account_recursive(db, done, nowdate, vids, group, acc, cb);
+          });
+        });
+      }, (err) => {
+        db.query("ROLLBACK", [], (err: Error) => {
+          update_account_recursive(db, done, nowdate, vids, group, acc, cb);
+        });
+      });
+    }, (err) => {
+      log.info(err);
     });
   }
 }
@@ -510,7 +605,8 @@ function updateGroupScale() {
             }
             let nowdate = new Date();
             update_group_recursive(db, done, nowdate, groups, gids.map(gid => gid), [], () => {
-              //update_account_recursive(db,done,nowdate)
+              done();
+              resolve();
             });
           }
         });

@@ -4,7 +4,7 @@ import * as bunyan from "bunyan";
 import { createClient, RedisClient} from "redis";
 import { Socket, socket } from "nanomsg";
 
-declare module 'redis' {
+declare module "redis" {
   export interface RedisClient extends NodeJS.EventEmitter {
     hgetAsync(key: string, field: string): Promise<any>;
   }
