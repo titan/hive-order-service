@@ -59,7 +59,7 @@ function formatNum(Source: string, Length: number): string {
 }
 
 function checkArgs(arg, sarg) {
-  if (sarg === null || sarg === undefined || sarg === '') {
+  if (sarg === null || sarg === undefined || sarg === "") {
     return true;
   } else {
     if (arg === sarg) {
@@ -71,7 +71,7 @@ function checkArgs(arg, sarg) {
 }
 
 function checkDate(datetime) {
-  if (datetime === null || datetime == undefined || datetime === '') {
+  if (datetime === null || datetime === undefined || datetime === "") {
     return false;
   } else {
     return true;
@@ -221,8 +221,13 @@ svc.call("getOrders", permissions, (ctx: Context, rep: ResponseFunction, offset:
         if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
-          let nowDate = (new Date()).getTime() + 28800000;
-          rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
+          const neworders = replies.filter(e => JSON.parse(e) !== null);
+          if (neworders.length === 0) {
+            rep({ code: 404, msg: "not found" });
+          } else {
+            let nowDate = (new Date()).getTime() + 28800000;
+            rep({ code: 200, data: neworders.map(o => JSON.parse(o)), nowDate: nowDate });
+          }
         }
       });
     }
@@ -263,28 +268,28 @@ svc.call("getOrderState", permissions, (ctx: Context, rep: ResponseFunction, vid
 });
 
 // 获取驾驶人信息
-svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
-  log.info("getdriverorders");
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
-  })) {
-    return;
-  }
-  ctx.cache.hget(driver_entities, vid, function (err, result) {
-    if (err) {
-      log.info("get redis error in getDriverOrders");
-      rep({ code: 500, msg: err.message });
-    } else if (result == null) {
-      rep({ code: 404, msg: "not found" });
-    } else {
-      rep({ code: 200, data: JSON.parse(result) });
-    }
-  });
-});
-//获取当前车的驾驶人信息
+// svc.call("getDriverOrders", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
+//   log.info("getdriverorders");
+//   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+//     rep({
+//       code: 400,
+//       msg: errors.join("\n")
+//     });
+//   })) {
+//     return;
+//   }
+//   ctx.cache.hget(driver_entities, vid, function (err, result) {
+//     if (err) {
+//       log.info("get redis error in getDriverOrders");
+//       rep({ code: 500, msg: err.message });
+//     } else if (result == null) {
+//       rep({ code: 404, msg: "not found" });
+//     } else {
+//       rep({ code: 200, data: JSON.parse(result) });
+//     }
+//   });
+// });
+// 获取当前车的驾驶人信息
 svc.call("getDriverForVehicle", permissions, (ctx: Context, rep: ResponseFunction, vid: string) => {
   log.info("getDriverForVehicle");
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
@@ -310,7 +315,7 @@ svc.call("getDriverForVehicle", permissions, (ctx: Context, rep: ResponseFunctio
           rep({ code: 404, msg: "not found" });
         } else {
           let user_orders = replies.map(e => JSON.parse(e));
-          let driver_orders = user_orders.filter(order => order !== null && order["type = 1"] && order["vehicle"]["id"] === vid)
+          let driver_orders = user_orders.filter(order => order !== null && order["type"] === 1 && order["vehicle"]["id"] === vid);
           let drivers = [];
           for (let driver_order of driver_orders) {
             for (let d of driver_order["drivers"]) {
@@ -320,8 +325,9 @@ svc.call("getDriverForVehicle", permissions, (ctx: Context, rep: ResponseFunctio
           if (drivers.length === 0) {
             rep({ code: 404, msg: "not found" });
           } else {
+            const newdrivers = drivers.filter(e => e !== null);
             let nowDate = (new Date()).getTime() + 28800000;
-            rep({ code: 200, data: drivers });
+            rep({ code: 200, data: newdrivers.map(o => o), nowDate: nowDate });
           }
         }
       });
@@ -491,7 +497,7 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       log.info("get redis error in getPlanOrderByVehicle");
       log.info(err);
       rep({ code: 500, msg: err.message });
-    } else if (result === null) {
+    } else if (result === null || result === "") {
       log.info("not found planorder for this vid");
       rep({ code: 404, msg: "not found" });
     } else {
@@ -500,7 +506,7 @@ svc.call("getDriverOrderByVehicle", permissions, (ctx: Context, rep: ResponseFun
       multi.exec((err1, replies1) => {
         if (err1) {
           log.error(err1, "query error");
-        } else if (replies1 === null || replies1.length === 0) {
+        } else if (replies1[0] === null || replies1.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
           rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
@@ -901,22 +907,22 @@ svc.call("refresh", permissions, (ctx: Context, rep: ResponseFunction) => {
 
 // 判断一个VIN码是否有订单 ValidOrder
 svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) => {
-  log.info("ValidOrder");
+  log.info("ValidOrder " + VIN);
+  if (!verify([stringVerifier("VIN", VIN)], (errors: string[]) => {
+    log.info(errors);
+    rep({ code: 400, msg: errors.join("\n") });
+  })) {
+    return;
+  }
   ctx.cache.hget("VIN-orderID", VIN, function (err, result) {
     if (err) {
       log.info(err);
-      rep({
-        code: 500,
-        msg: err.message
-      });
+      rep({ code: 500, msg: err.message });
     } else if (result) {
       ctx.cache.hget("order-entities", result, (err2, result2) => {
         if (err2) {
           log.info(err2);
-          rep({
-            code: 500,
-            msg: err2.message
-          });
+          rep({ code: 500, msg: err2.message });
         } else if (result2) {
           let order = JSON.parse(result2);
           let user_id = order["vehicle"]["user_id"];
@@ -943,35 +949,22 @@ svc.call("ValidOrder", permissions, (ctx: Context, rep: ResponseFunction, VIN) =
               let date = new Date();
               if ((order["stop_at"].getTime() - date.getTime()) < 7776000000) {
                 state_code = 8;
-                state = "该车距计划到期时间超过3个月，请在到期前3个月内获取报价。";
+                state = "该车距计划到期时间不足3个月，可以重新获取报价。";
               }
             }
-            rep({
-              code: 200,
-              data: { state: state_code, msg: state }
-            });
+            rep({ code: 200, data: { state: state_code, msg: state } });
           } else {
-            rep({
-              code: 200,
-              data: { state: 10, msg: "该车已通过其他微信号生成订单,如非本人操作，请及时联系客服。" }
-            });
+            rep({ code: 200, data: { state: 10, msg: "该车已通过其他微信号生成订单,如非本人操作，请及时联系客服。" } });
           }
         } else {
-          rep({
-            code: 200,
-            data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
-          });
+          rep({ code: 200, data: { state: 0, msg: "该车不存在有效订单，可以继续报价。" } });
         }
       });
     } else {
-      rep({
-        code: 200,
-        data: { state: 0, msg: "该车不存在订单，可以继续报价。" }
-      });
+      rep({ code: 200, data: { state: 0, msg: "该车不存在订单，可以继续报价。" } });
     }
   });
 });
-
 log.info("Start service at " + config.svraddr);
 
 svc.run();

@@ -195,9 +195,9 @@ function async_serial_driver(ps: Promise<any>[], acc: any[], cb: (vals: any[]) =
       acc.push(val);
       async_serial_driver(ps, acc, cb);
     })
-    .catch(e => {
-      async_serial_driver(ps, acc, cb);
-    });
+      .catch(e => {
+        async_serial_driver(ps, acc, cb);
+      });
   }
 }
 
@@ -567,12 +567,12 @@ function createGroup(domain: string, order: Object, uid: string): Promise<any> {
   return rpc(domain, servermap["group"], null, "createGroup", g_name, vehicle["id"], apportion, uid);
 }
 
-function createAccount(domain: string, order: Object, uid: string): Promise<any> {
+function createAccount(domain: string, order: Object, uid: string, order_id: string): Promise<any> {
   const vid = order["vehicle"]["id"];
   const balance = order["summary"];
   const balance0 = balance * 0.2;
   const balance1 = balance * 0.8;
-  return rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1);
+  return rpc(domain, servermap["wallet"], null, "createAccount", uid, 1, vid, balance0, balance1, order_id);
 }
 
 processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: DoneFunction, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
@@ -641,13 +641,59 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
     });
     predis.then((order) => {
       if (state_code === 2) {
-        createAccount(domain, order, uid).then((result) => {
+        createAccount(domain, order, uid, order_id).then((result) => {
           cache.setex(cbflag, 30, JSON.stringify({
             code: 200,
             data: order_id
           }), (err, result2) => {
             done();
             log.info("UpdateOrderState success");
+          });
+          let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", uid);
+          p.then(profile => {
+            if (profile.code === 200) {
+              let openid = profile["data"]["openid"];
+              let postData = queryString.stringify({
+                "user": openid,
+                "OrderNo": order["id"],
+                "Price": order["payment"],
+                "Plan": "好车主互助计划",
+                "orderId": order["order_id"]
+              });
+              let options = {
+                hostname: wxhost,
+                port: 80,
+                path: "/wx/wxpay/tmsgPaySuccess",
+                method: "GET",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "Content-Length": Buffer.byteLength(postData)
+                }
+              };
+              let req = http.request(options, (res) => {
+                log.info(`STATUS: ${res.statusCode}`);
+                res.setEncoding("utf8");
+                res.on("data", (chunk) => {
+                  log.info(`BODY: ${chunk}`);
+                });
+                res.on("end", () => {
+                  log.info("tmsgPaySuccess done");
+                });
+              });
+              req.on("error", (e) => {
+                log.info(`problem with request: ${e.message}`);
+                cache.setex(callback, 30, JSON.stringify({
+                  code: 500,
+                  msg: e.message
+                }), (err, result) => {
+                  done();
+                });
+                log.info("err" + e);
+
+              });
+              req.write(postData);
+              req.end();
+            }
           });
         }).catch((e: Error) => {
           log.info(e);
@@ -1213,7 +1259,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
                       resolve(order);
                       log.info("no ticket user");
                     }
-                  }).catch((e:Error) =>{
+                  }).catch((e: Error) => {
                     reject(e);
                   });
                 } else {
@@ -1315,7 +1361,7 @@ processor.call("submitUnderwriteResult", (db: PGClient, cache: RedisClient, done
               done();
             });
             log.info("err" + error);
-          })
+          });
         }).catch(error => {
           cache.setex(callback, 30, JSON.stringify({
             code: 500,
@@ -1403,60 +1449,60 @@ function modifyUnderwrite(db: PGClient, cache: RedisClient, done: DoneFunction, 
       }
     });
   })
-  .then(() => {
-    return new Promise<Object>((resolve, reject) => {
-      log.info("redis " + uwid);
-      cache.hget("underwrite-entities", uwid, function (err, result) {
-        if (result) {
-          resolve(JSON.parse(result));
-        } else if (err) {
-          log.info(err);
-          reject(err);
-        } else {
-          resolve(null);
-        }
+    .then(() => {
+      return new Promise<Object>((resolve, reject) => {
+        log.info("redis " + uwid);
+        cache.hget("underwrite-entities", uwid, function (err, result) {
+          if (result) {
+            resolve(JSON.parse(result));
+          } else if (err) {
+            log.info(err);
+            reject(err);
+          } else {
+            resolve(null);
+          }
+        });
       });
-    });
-  })
-  .then((underwrite: Object) => {
-    if (underwrite != null) {
-      let uw = cb(underwrite);
-      let multi = cache.multi();
-      multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
-      multi.setex(cbflag, 30, JSON.stringify({
-        code: 200,
-        uwid: uwid
-      }));
-      multi.exec((err: Error, _) => {
-        if (err) {
-          log.error(err, "update underwrite cache error");
-          cache.setex(cbflag, 30, JSON.stringify({
-            code: 500,
-            msg: "update underwrite cache error"
-          }));
-        }
-        underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
-        done();
-      });
-    } else {
+    })
+    .then((underwrite: Object) => {
+      if (underwrite != null) {
+        let uw = cb(underwrite);
+        let multi = cache.multi();
+        multi.hset("underwrite-entities", uwid, JSON.stringify(uw));
+        multi.setex(cbflag, 30, JSON.stringify({
+          code: 200,
+          uwid: uwid
+        }));
+        multi.exec((err: Error, _) => {
+          if (err) {
+            log.error(err, "update underwrite cache error");
+            cache.setex(cbflag, 30, JSON.stringify({
+              code: 500,
+              msg: "update underwrite cache error"
+            }));
+          }
+          underwrite_trigger.send(msgpack.encode({ uwid, underwrite }));
+          done();
+        });
+      } else {
+        cache.setex(cbflag, 30, JSON.stringify({
+          code: 404,
+          msg: "Not found underwrite"
+        }), (err, result) => {
+          done();
+        });
+        log.info("Not found underwrite");
+      }
+    })
+    .catch(error => {
       cache.setex(cbflag, 30, JSON.stringify({
-        code: 404,
-        msg: "Not found underwrite"
+        code: 500,
+        msg: error.message
       }), (err, result) => {
         done();
       });
-      log.info("Not found underwrite");
-    }
-  })
-  .catch(error => {
-    cache.setex(cbflag, 30, JSON.stringify({
-      code: 500,
-      msg: error.message
-    }), (err, result) => {
-      done();
+      log.info("err" + error);
     });
-    log.info("err" + error);
-  });
 }
 
 function select_order_item_recursive(db, done, piids, acc, cb) {
