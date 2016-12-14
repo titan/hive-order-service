@@ -198,12 +198,6 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   return multi.execAsync();
 }
 
-
-async function createAccount(domain: string, vid: string, uid: string, order_id: string): Promise<any> {
-  return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, order_id);
-}
-
-
 processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date, cbflag: string) => {
   log.info(`placeAnPlanOrder, domain: ${domain}, uid: ${uid}, order_id: ${order_id}, vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}, cbflag: ${cbflag}`);
   const db: PGClient = ctx.db;
@@ -247,7 +241,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
         }
       }
       await db.query("COMMIT");
-      await createAccount(domain, vid, uid, order_id);
+      // await createAccount(domain, vid, uid, order_id);
       await cache.setexAsync(cbflag, 30, JSON.stringify({
         code: 200,
         data: { id: order_id, no: order_no }
@@ -438,7 +432,7 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
         await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
       }
       await db.query("COMMIT");
-      await updateAccount(domain, vid, uid, payment, order_id, cache);
+      await updateAccount(domain, vid, uid, payment, cache);
       await sync_driver_orders(db, cache, domain, order_id);
       await cache.setexAsync(cbflag, 30, JSON.stringify({
         code: 200,
@@ -455,7 +449,7 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   });
 });
 
-async function updateAccount(domain: string, vid: string, uid: string, payment: number, order_id: string, title: string, cache: any): Promise<any> {
+async function updateAccount(domain: string, vid: string, uid: string, payment: number, cache: any): Promise<any> {
   const balance = payment;
   let balance0: number = null;
   let balance1: number = null;
@@ -469,7 +463,14 @@ async function updateAccount(domain: string, vid: string, uid: string, payment: 
     balance0 = payment * 0.2;
     balance1 = payment * 0.8;
   }
-  return rpc(domain, process.env["WALLET"], null, "updateAccountbalance", uid, vid, 1, 1, balance0, balance1, order_id, title);
+  return rpc(domain, process.env["WALLET"], null, "updateAccountbalance", uid, vid, 1, balance0, balance1);
+}
+
+async function createAccount(domain: string, vid: string, uid: string, order: Object): Promise<any> {
+  const balance = order["payment"];
+  const balance0 = balance * 0.2;
+  const balance1 = balance * 0.8;
+  return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, balance0, balance1);
 }
 
 processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
@@ -514,7 +515,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       await multi.execAsync();
       if (state_code === 2) {
         const title = "参加计划　收入"
-        await updateAccount(domain, order["vehicle"]["id"], uid, order["payment"], order_id, title, cache);
+        await createAccount(domain, order["vehicle"]["id"], uid, order);
       }
       cache.setex(cbflag, 30, JSON.stringify({
         code: 200,
