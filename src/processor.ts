@@ -438,8 +438,7 @@ processor.call("placeAnDriverOrder", (db: PGClient, cache: RedisClient, done: Do
   let state = "已支付";
   let type = 1;
   let driver_id = uuid.v1();
-  let driver_data1 = "添加驾驶人";
-  let driver_data = JSON.stringify(driver_data1);
+  let driver_data = "添加驾驶人";
   let created_at = new Date().getTime();
   let created_at1 = getLocalTime(created_at / 1000);
   db.query("BEGIN", (err: Error) => {
@@ -651,7 +650,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
           });
           let p = rpc<Object>(domain, servermap["profile"], null, "getUserByUserId", uid);
           p.then(profile => {
-            if (profile.code === 200) {
+            if (profile["code"] === 200) {
               let openid = profile["data"]["openid"];
               let postData = queryString.stringify({
                 "user": openid,
@@ -682,7 +681,7 @@ processor.call("updateOrderState", (db: PGClient, cache: RedisClient, done: Done
               });
               req.on("error", (e) => {
                 log.info(`problem with request: ${e.message}`);
-                cache.setex(callback, 30, JSON.stringify({
+                cache.setex(cbflag, 30, JSON.stringify({
                   code: 500,
                   msg: e.message
                 }), (err, result) => {
