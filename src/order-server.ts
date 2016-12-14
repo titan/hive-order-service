@@ -20,6 +20,7 @@ declare module "redis" {
 
 const allowAll: Permission[] = [["mobile", true], ["admin", true]];
 const mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
+const adminOnly: Permission[] = [["mobile", false], ["admin", true]];
 
 export const server = new Server();
 
@@ -489,4 +490,12 @@ server.call("getSaleOrder", allowAll, "根据vid获取第三方保险", "根据v
       rep({ code: 404, msg: "Order not found" });
     }
   });
+});
+
+server.call("refresh", allowAll, "refresh", "刷新订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
+    log.info("refresh");
+    const domain = ctx.domain;
+    const pkt: CmdPacket = { cmd: "refresh", args: [domain] };
+    ctx.publish(pkt);
+    rep({ code: 200, msg: "success" });
 });

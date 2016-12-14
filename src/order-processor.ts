@@ -241,6 +241,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
         }
       }
       await db.query("COMMIT");
+      // await createAccount(domain, vid, uid, order_id);
       await cache.setexAsync(cbflag, 30, JSON.stringify({
         code: 200,
         data: { id: order_id, no: order_no }
@@ -431,6 +432,7 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
         await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
       }
       await db.query("COMMIT");
+      await updateAccount(domain, vid, uid, payment, cache);
       await sync_driver_orders(db, cache, domain, order_id);
       await cache.setexAsync(cbflag, 30, JSON.stringify({
         code: 200,
@@ -447,9 +449,25 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   });
 });
 
-async function createAccount(domain: string, order: Object, uid: string): Promise<any> {
-  const vid = order["vehicle"]["id"];
-  const balance = order["summary"];
+async function updateAccount(domain: string, vid: string, uid: string, payment: number, cache: any): Promise<any> {
+  const balance = payment;
+  let balance0: number = null;
+  let balance1: number = null;
+  const gid = await cache.hgetAsync("vid-gid", vid);
+  if (gid !== null || gid !== "") {
+    const group_entities = await cache.hgetAsync("group-entities", gid);
+    const apportion: number = group_entities["apportion"];
+    balance0 = payment * apportion;
+    balance1 = payment * (1 - apportion);
+  } else {
+    balance0 = payment * 0.2;
+    balance1 = payment * 0.8;
+  }
+  return rpc(domain, process.env["WALLET"], null, "updateAccountbalance", uid, vid, 1, balance0, balance1);
+}
+
+async function createAccount(domain: string, vid: string, uid: string, order: Object): Promise<any> {
+  const balance = order["payment"];
   const balance0 = balance * 0.2;
   const balance1 = balance * 0.8;
   return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, balance0, balance1);
@@ -496,7 +514,8 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       multi.hset("order-entities", order_id, JSON.stringify(order));
       await multi.execAsync();
       if (state_code === 2) {
-        await createAccount(domain, order, uid);
+        const title = "参加计划　收入"
+        await createAccount(domain, order["vehicle"]["id"], uid, order);
       }
       cache.setex(cbflag, 30, JSON.stringify({
         code: 200,
