@@ -131,9 +131,16 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   const qids = [... new Set(qidstmp)];
   const pids = [... new Set(pidstmp)];
 
-  const pvs = vids.map(vid => rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid)); // fetch vehicles in parallel way
-  const vreps = await Promise.all(pvs);
-  const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+  const vehicles = [];
+  const quotations = [];
+
+  for (const vid of vids) {
+    const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid);
+    if (vrep["code"] === 200) {
+      vehicles.push(vrep["data"]);
+    }
+  }
+
   for (const vehicle of vehicles) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -143,9 +150,13 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     }
   }
 
-  const pqs = qids.map(qid => rpc<Object>(domain, process.env["QUOTATION"], uid, "getQuotation", qid)); // fetch quotations in parallel way
-  const qreps = await Promise.all(pqs);
-  const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+  for (const qid of qids) {
+    const qrep = await rpc<Object>(domain, process.env["QUOTATION"], uid, "getQuotation", qid);
+    if (qrep["code"] === 200) {
+      quotations.push(qrep["data"]);
+    }
+  }
+
   for (const quotation of quotations) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -364,9 +375,22 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
   }
 
   const oids = Object.keys(orders);
-  const pvs = oids.map(oid => rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", orders[oid].vid)); // fetch vehicles in parallel
-  const vreps = await Promise.all(pvs);
-  const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+  const vehicles = [];
+  const drivers = [];
+  for (const oid of oids) {
+    const order = orders[oid];
+    const vrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", order.vid);
+    if (vrep["code"] === 200) {
+      vehicles.push(vrep["data"]);
+    }
+    const dids = [... new Set(order.dids)];
+    for (const did of dids) {
+      const drvrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getDrivers", order.vid, did);
+      if (drvrep["code"] === 200) {
+        drivers.push(drvrep["data"]);
+      }
+    }
+  }
   for (const vehicle of vehicles) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -375,16 +399,6 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
       }
     }
   }
-  const pds = oids.reduce((acc, oid) => {
-    const order = orders[oid];
-    for (const did of order.dids) {
-      const p = rpc<Object>(domain, process.env["VEHICLE"], null, "getDrivers", order.vid, did);
-      acc.push(p);
-    }
-    return acc;
-  }, []);
-  const drvreps = await Promise.all(pds);
-  const drivers = drvreps.filter(d => d["code"] === 200).map(d => d["data"]);
   for (const driver of drivers) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -535,7 +549,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
 });
 
 async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
-  const result = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
+  const result = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
   const orders = {};
   for (const row of result.rows) {
     if (orders.hasOwnProperty(row.o_id)) {
@@ -595,9 +609,15 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
   const qids = [... new Set(qidstmp)];
   const pids = [... new Set(pidstmp)];
 
-  const pvs = vids.map(vid => rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", vid)); // fetch vehicle in parallel
-  const vreps = await Promise.all(pvs);
-  const vehicles = vreps.filter(v => v["code"] === 200).map(v => v["data"]);
+  const vehicles = [];
+
+  for (const vid of vids) {
+    const vrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", vid);
+    if (vrep["code"] === 200) {
+      vehicles.push(vrep["data"]);
+    }
+  }
+
   for (const vehicle of vehicles) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -606,9 +626,16 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
       }
     }
   }
-  const pqs = qids.map(qid => rpc<Object>(domain, process.env["QUOTATION"], null, "getQuotation", qid)); // fetch quotation in parallel
-  const qreps = await Promise.all(pqs);
-  const quotations = qreps.filter(q => q["code"] === 200).map(q => q["data"]);
+
+  const quotations = [];
+
+  for (const qid of qids) {
+    const qrep = await rpc<Object>(domain, process.env["QUOTATION"], null, "getQuotation", qid);
+    if (qrep["code"] === 200) {
+      quotations.push(qrep["data"]);
+    }
+  }
+
   for (const quotation of quotations) {
     for (const oid of oids) {
       const order = orders[oid];
@@ -618,7 +645,8 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
       }
     }
   }
-  const pps = pids.map(pid => rpc<Object>(domain, process.env["plan"], null, "getPlan", pid)); // fetch plan in parallel
+
+  const pps = pids.map(pid => rpc<Object>(domain, process.env["PLAN"], null, "getPlan", pid)); // fetch plan in parallel
   const preps = await Promise.all(pps);
   const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
   for (const oid of oids) {
