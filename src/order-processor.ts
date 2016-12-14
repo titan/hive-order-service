@@ -1,9 +1,10 @@
 import { Processor, ProcessorFunction, ProcessorContext, rpc } from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
-import { RedisClient } from "redis";
+import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
+import * as bluebird from "bluebird";
 import * as bunyan from "bunyan";
-import * as uuid from "node-uuid";
+import * as uuid from "uuid";
 
 export const processor = new Processor();
 
@@ -174,7 +175,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     }
   }
 
-  const multi = cache.multi();
+  const multi = bluebird.promisifyAll(cache.multi()) as Multi;
   for (const oid of oids) {
     const order = orders[oid];
     delete order["pids"];
@@ -312,7 +313,7 @@ processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_or
       }
       const order = JSON.parse(orderjson);
       order["no"] = new_order_no;
-      const multi = cache.multi();
+      const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       multi.hdel("orderNo-id", order_no);
       multi.hset("orderNo-id", new_order_no, oid);
       multi.hset("order-entities", oid, JSON.stringify(order));
@@ -395,7 +396,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
     }
   }
 
-  const multi = cache.multi();
+  const multi = bluebird.promisifyAll(cache.multi()) as Multi;
   for (const oid of oids) {
     const order = orders[oid];
     const updated_at = order.updated_at.getTime();
@@ -501,7 +502,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         return;
       }
       const order = JSON.parse(orderjson);
-      const multi = cache.multi();
+      const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       const updated_at = (new Date()).getTime();
       order["state_code"] = state_code;
       order["state"] = state;
@@ -635,7 +636,7 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
       }
     }
   }
-  const multi = cache.multi();
+  const multi = bluebird.promisifyAll(cache.multi()) as Multi;
   for (const oid of oids) {
     const order = orders[oid];
     const vid = order["vehicle"]["vid"];
