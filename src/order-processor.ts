@@ -1,4 +1,4 @@
-import { Processor, ProcessorFunction, ProcessorContext, rpc } from "hive-service";
+import { Processor, ProcessorFunction, ProcessorContext, rpc, msgpack_decode, msgpack_encode} from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
@@ -194,6 +194,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     const vid = order["vid"];
     const qid = order["qid"];
     const updated_at = order["updated_at"].getTime();
+    const newOrder = await msgpack_encode(order);
     multi.zadd("new-orders-id", updated_at, oid);
     multi.hset("vid-poid", vid, oid);
     multi.zadd("plan-orders", updated_at, oid);
@@ -202,7 +203,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     multi.hset("orderNo-id", order_no, oid);
     multi.hset("order-vid-" + vid, qid, oid);
     multi.hset("orderid-vid", oid, vid);
-    multi.hset("order-entities", oid, JSON.stringify(order));
+    multi.hset("order-entities", oid, newOrder);
     multi.zadd("plan-orders", updated_at, oid);
     multi.hset("VIN-orderID", order["vehicle"]["vin_code"], oid);
   }
@@ -322,12 +323,13 @@ processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_or
         done();
         return;
       }
-      const order = JSON.parse(orderjson);
+      const order = await msgpack_decode(orderjson);
       order["no"] = new_order_no;
+      const newOrder = await msgpack_encode(order);
       const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       multi.hdel("orderNo-id", order_no);
       multi.hset("orderNo-id", new_order_no, oid);
-      multi.hset("order-entities", oid, JSON.stringify(order));
+      multi.hset("order-entities", oid, newOrder);
       await multi.execAsync();
       await cache.setexAsync(cbflag, 30, JSON.stringify({
         code: 200,
@@ -416,11 +418,12 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
     const updated_at = order.updated_at.getTime();
     const uid = order["uid"];
     const vid = order["vid"];
+    const newOrder = await msgpack_encode(order);
     multi.zadd("driver_orders", updated_at, oid);
     multi.zadd("orders", updated_at, oid);
     multi.hset("vid-doid", vid, JSON.stringify(order["drivers"].map(d => d["id"])));
     multi.hset("driver-entities-", vid, JSON.stringify(order["drivers"]));
-    multi.hset("order-entities", oid, JSON.stringify(order));
+    multi.hset("order-entities", oid, newOrder);
     multi.zadd("driver-orders", updated_at, oid);
   }
   return multi.execAsync();
@@ -515,7 +518,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         done();
         return;
       }
-      const order = JSON.parse(orderjson);
+      const order = await msgpack_encode(orderjson);
       const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       const updated_at = (new Date()).getTime();
       order["state_code"] = state_code;
@@ -526,10 +529,11 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         multi.zrem("new-orders-id", order_id);
         multi.zadd("new-pays-id", updated_at, order_id);
       }
-      multi.hset("order-entities", order_id, JSON.stringify(order));
+      const newOrder = await msgpack_decode(order);
+      multi.hset("order-entities", order_id, newOrder);
       await multi.execAsync();
       if (state_code === 2) {
-        const title = "参加计划　收入"
+        const title = "参加计划　收入";
         await createAccount(domain, order["vehicle"]["id"], uid, order);
       }
       cache.setex(cbflag, 30, JSON.stringify({
@@ -669,10 +673,11 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
     const order = orders[oid];
     const vid = order["vehicle"]["vid"];
     const updated_at = order.updated_at.getTime();
+    const newOrder = await msgpack_encode(order);
     multi.zadd("orders", updated_at, oid);
     multi.hset("vid-soid", vid, oid);
     multi.hset("orderid-vid", oid, vid);
-    multi.hset("order-entities", oid, JSON.stringify(order));
+    multi.hset("order-entities", oid, newOrder);
     multi.zadd("sale-orders", updated_at, oid);
   }
   return multi.execAsync();
