@@ -788,6 +788,7 @@ processor.call("updateSaleOrder", (ctx: ProcessorContext, domain: any, order_id:
   })();
 });
 
+//　刷新所有
 async function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_driver_orders(db, cache, domain, null);
 }
@@ -799,6 +800,44 @@ async function refresh_plan_orders(db: PGClient, cache: RedisClient, domain: str
 async function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_sale_orders(db, cache, domain, null);
 }
+
+//　刷新一个
+async function refresh_driver_order(db: PGClient, cache: RedisClient, domain: string, uid: string, oid: string): Promise<void> {
+  return sync_driver_orders(db, cache, domain, uid, oid);
+}
+
+async function refresh_plan_order(db: PGClient, cache: RedisClient, domain: string, uid: string, oid: string): Promise<void> {
+  return sync_plan_orders(db, cache, domain, uid, oid);
+}
+
+async function refresh_sale_order(db: PGClient, cache: RedisClient, domain: string, uid: string, oid: string): Promise<void> {
+  return sync_sale_orders(db, cache, domain, uid, oid);
+}
+
+
+processor.call("refresh_order", (ctx: ProcessorContext, domain: string, type: number, uid: string, oid: string) => {
+  log.info("refresh a plan order");
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  const done = ctx.done;
+  (async () => {
+    try {
+      if (type === 1) {
+        await refresh_plan_order(db, cache, domain, uid, oid);
+      } else if (type === 2) {
+        await refresh_driver_order(db, cache, domain, uid, oid);
+      } else if (type === 3) {
+        await refresh_sale_order(db, cache, domain, uid, oid);
+      } else {
+        log.info("type error");
+      }
+      log.info("refresh plan order done!");
+      done();
+    } catch (e) {
+      log.error(e);
+    }
+  })();
+});
 
 processor.call("refresh", (ctx: ProcessorContext, domain: string) => {
   log.info("refresh");

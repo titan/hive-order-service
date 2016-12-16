@@ -287,7 +287,7 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
 
 server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
   log.info(`placeAnPlanOrder vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}`);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("promotion", promotion), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -551,10 +551,27 @@ server.call("getSaleOrder", allowAll, "根据vid获取第三方保险", "根据v
   });
 });
 
-server.call("refresh", allowAll, "refresh", "刷新订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
+server.call("refresh", allowAll, "refresh", "刷新所有订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
   log.info("refresh");
   const domain = ctx.domain;
   const pkt: CmdPacket = { cmd: "refresh", args: [domain] };
+  ctx.publish(pkt);
+  rep({ code: 200, msg: "success" });
+});
+
+
+server.call("refresh_order", allowAll, "refresh", "刷新单个订单数据", (ctx: ServerContext, rep: ((result: any) => void), type: number, uid: string, oid: string) => {
+  log.info("refresh");
+  if (!verify([uuidVerifier("uid", uid), numberVerifier("type", type), stringVerifier("oid", oid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const domain = ctx.domain;
+  const pkt: CmdPacket = { cmd: "refresh", args: [domain, type, uid, oid] };
   ctx.publish(pkt);
   rep({ code: 200, msg: "success" });
 });
