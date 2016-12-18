@@ -135,7 +135,7 @@ server.call("getOrder", allowAll, "获取订单详情", "获得订单详情", (c
       (async () => {
         try {
           const order = await msgpack_decode(result);
-          const nowDate = (new Date()).getTime() + 28800000;
+          const nowDate = (new Date()).getTime();
           rep({ code: 200, data: order, nowDate: nowDate });
         } catch (e) {
           log.info(e);
@@ -172,13 +172,15 @@ server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的�
         if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
-          const nowDate = (new Date()).getTime() + 28800000;
+          const nowDate = (new Date()).getTime();
           (async () => {
             const orders = [];
             try {
               for (const pkt of replies) {
-                const order = await msgpack_decode(pkt);
-                orders.push(order);
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  orders.push(order);
+                }
               }
               rep({ code: 200, data: orders, nowDate: nowDate });
             } catch (e) {
@@ -257,8 +259,10 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
             const user_orders = [];
             try {
               for (const pkt of replies) {
-                const order = await msgpack_decode(pkt);
-                user_orders.push(order);
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  user_orders.push(order);
+                }
               }
               const driver_orders = user_orders.filter(order => order !== null && order["type"] === 1 && order["vehicle"]["id"] === vid);
               const drivers = [];
@@ -270,7 +274,7 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
               if (drivers.length === 0) {
                 rep({ code: 404, msg: "Drivers not found" });
               } else {
-                const nowDate = (new Date()).getTime() + 28800000;
+                const nowDate = (new Date()).getTime();
                 rep({ code: 200, data: drivers });
               }
             } catch (e) {
@@ -341,14 +345,14 @@ server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状
         rep({ code: 404, msg: "Order no not found" });
         return;
       }
-      const vid = await cache.hgetAsync("orderid-vid", order_id);
+      const vid = await cache.hgetAsync("orderid-vid", String(order_id));
       if (!vid) {
         rep({ code: 404, msg: "Order not found" });
         return;
       }
       const callback = uuid.v1();
       const domain = ctx.domain;
-      const pkt: CmdPacket = { cmd: "updateOrderState", args: [domain, uid, vid, order_id, state_code, state, callback] };
+      const pkt: CmdPacket = { cmd: "updateOrderState", args: [domain, uid, vid, String(order_id), state_code, state, callback] };
       ctx.publish(pkt);
       wait_for_response(ctx.cache, callback, rep);
     } catch (err) {
@@ -413,7 +417,7 @@ server.call("getPlanOrderByVehicle", allowAll, "通过vid获取已生效计划�
         } else if (result1) {
           (async () => {
             try {
-              let nowDate = (new Date()).getTime() + 28800000;
+              let nowDate = (new Date()).getTime();
               const order = await msgpack_decode(result1);
               rep({ code: 200, data: order, nowDate: nowDate });
             } catch (e) {
@@ -460,8 +464,10 @@ server.call("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "�
             const orders = [];
             try {
               for (const pkt of replies1) {
-                const order = await msgpack_decode(pkt);
-                orders.push(order);
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  orders.push(order);
+                }
               }
               rep({ code: 200, data: orders });
             } catch (e) {
@@ -571,7 +577,7 @@ server.call("refresh_order", allowAll, "refresh", "刷新单个订单数据", (c
     return;
   }
   const domain = ctx.domain;
-  const pkt: CmdPacket = { cmd: "refresh", args: [domain, type, uid, oid] };
+  const pkt: CmdPacket = { cmd: "refresh_order", args: [domain, type, uid, oid] };
   ctx.publish(pkt);
   rep({ code: 200, msg: "success" });
 });
