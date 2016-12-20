@@ -234,7 +234,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
   (async () => {
     try {
       const strno = await increase_order_no(cache);
-
+      const newstrno = formatNum(String(strno), 7);
       let sum = 0;
       for (const i of pids) {
         const str = i.substring(24);
@@ -243,7 +243,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       }
       const sum2 = sum + "";
       const sum1 = formatNum(sum2, 3);
-      const order_no = "1" + "110" + "001" + sum1 + year + strno;
+      const order_no = "1" + "110" + "001" + sum1 + year + newstrno;
       await db.query("BEGIN");
       await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no]);
       for (const pid of Object.keys(plans)) {
