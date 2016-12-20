@@ -1,4 +1,4 @@
-import { Processor, ProcessorFunction, ProcessorContext, rpc, msgpack_decode, msgpack_encode} from "hive-service";
+import { Processor, ProcessorFunction, ProcessorContext, rpc, msgpack_decode, msgpack_encode, set_for_response} from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
@@ -13,7 +13,7 @@ declare module "redis" {
     incrAsync(key: string): Promise<any>;
     hgetAsync(key: string, field: string): Promise<any>;
     hincrbyAsync(key: string, field: string, value: number): Promise<any>;
-    lpushAsync(key: string, value: string | number): Promise<any>;
+    lpushAsync(key: string, value: string | number | Buffer): Promise<any>;
     setexAsync(key: string, ttl: number, value: string): Promise<any>;
     zrevrangebyscoreAsync(key: string, start: number, stop: number): Promise<any>;
   }
@@ -199,7 +199,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     multi.hset("vid-poid", vid, oid);
     multi.zadd("plan-orders", updated_at, oid);
     multi.zadd("orders", updated_at, oid);
-    multi.zadd("orders-" + order["vehicle"]["user_id"], updated_at, oid);
+    multi.zadd("orders-" + order["vehicle"]["uid"], updated_at, oid);
     multi.hset("orderNo-id", order_no, oid);
     multi.hset("order-vid-" + vid, qid, oid);
     multi.hset("orderid-vid", oid, vid);
@@ -234,7 +234,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
   (async () => {
     try {
       const strno = await increase_order_no(cache);
-
+      const newstrno = formatNum(String(strno), 7);
       let sum = 0;
       for (const i of pids) {
         const str = i.substring(24);
@@ -243,7 +243,7 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       }
       const sum2 = sum + "";
       const sum1 = formatNum(sum2, 3);
-      const order_no = "1" + "110" + "001" + sum1 + year + strno;
+      const order_no = "1" + "110" + "001" + sum1 + year + newstrno;
       await db.query("BEGIN");
       await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment, no) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [order_id, vid, type, state_code, state, summary, payment, order_no]);
       for (const pid of Object.keys(plans)) {
@@ -255,10 +255,10 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       }
       await db.query("COMMIT");
       // await createAccount(domain, vid, uid, order_id);
-      await cache.setexAsync(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: { id: order_id, no: order_no }
-      })); // Notify server to return result to client
+      });
       await sync_plan_orders(db, cache, domain, uid, order_id);
     } catch (e) {
       log.error(e);
@@ -267,11 +267,9 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
       } catch (e1) {
         log.error(e1);
       }
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 500,
-        msg: e.message
-      }), (err, result) => {
-        done();
+        data: e.message
       });
       return;
     }
@@ -289,7 +287,8 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
           qid: qid,
           occurredAt: date
         };
-        await cache.lpushAsync("agent-customer-msg-queue", JSON.stringify(cm));
+        const new_cm = await msgpack_encode(cm);
+        await cache.lpushAsync("agent-customer-msg-queue", new_cm);
       }
     } catch (e) {
       log.error(e);
@@ -306,20 +305,20 @@ processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_or
     try {
       const oid = await cache.hgetAsync("orderNo-id", order_no);
       if (oid === null || oid === "") {
-        await cache.setexAsync(cbflag, 30, JSON.stringify({
+        await set_for_response(cache, cbflag, {
           code: 404,
-          msg: "Order id not found"
-        }));
+          msg: "Order_id not found"
+        });
         done();
         return;
       }
-      await db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, oid]);
+      await db.query("UPDATE orders SET no = $1 WHERE id = $2", [new_order_no, String(oid)]);
       const orderjson = await cache.hgetAsync("order-entities", oid);
       if (orderjson === null || orderjson === "") {
-        await cache.setexAsync(cbflag, 30, JSON.stringify({
+        await set_for_response(cache, cbflag, {
           code: 404,
           msg: "Order not found"
-        }));
+        });
         done();
         return;
       }
@@ -331,18 +330,16 @@ processor.call("updateOrderNo", (ctx: ProcessorContext, order_no: string, new_or
       multi.hset("orderNo-id", new_order_no, oid);
       multi.hset("order-entities", oid, newOrder);
       await multi.execAsync();
-      await cache.setexAsync(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: new_order_no
-      }));
+      });
       done();
     } catch (e) {
       log.error(e);
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 500,
         msg: e.message
-      }), (err, result) => {
-        done();
       });
     }
   })();
@@ -387,7 +384,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
     }
     const dids = [... new Set(order.dids)];
     for (const did of dids) {
-      const drvrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getDrivers", order.vid, did);
+      const drvrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getDriver", order.vid, did);
       if (drvrep["code"] === 200) {
         drivers.push(drvrep["data"]);
       }
@@ -404,7 +401,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
   for (const driver of drivers) {
     for (const oid of oids) {
       const order = orders[oid];
-      for (const drv of order.drivers) {
+      for (const drv of order.dids) {
         if (drv === driver["id"]) {
           order.drivers.push(driver);
         }
@@ -419,6 +416,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
     const uid = order["uid"];
     const vid = order["vid"];
     const newOrder = await msgpack_encode(order);
+    multi.zadd("orders-" + order["vehicle"]["uid"], updated_at, oid);
     multi.zadd("driver_orders", updated_at, oid);
     multi.zadd("orders", updated_at, oid);
     multi.hset("vid-doid", vid, JSON.stringify(order["drivers"].map(d => d["id"])));
@@ -440,10 +438,13 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   const state_code = 2;
   const state = "已支付";
   const type = 1;
+  const data = {
+    msg: "添加驾驶人"
+  };
   (async () => {
     try {
       await db.query("BEGIN");
-      await db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, "添加驾驶人"]);
+      await db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, data]);
       await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment]);
 
       for (const did of dids) {
@@ -451,20 +452,22 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
       }
       await db.query("COMMIT");
       await updateAccount(domain, vid, uid, payment, cache);
-      await sync_driver_orders(db, cache, domain, order_id);
-      await cache.setexAsync(cbflag, 30, JSON.stringify({
+      await sync_driver_orders(db, cache, domain, uid, order_id);
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: order_id
-      }));
-    } catch (err) {
-      cache.setex(cbflag, 30, JSON.stringify({
-        code: 500,
-        msg: err.message
-      }), (err, result) => {
-        done();
       });
+      log.info("placeAnDriverOrder done");
+      done();
+    } catch (e) {
+      await db.query("ROLLBACK");
+      await set_for_response(cache, cbflag, {
+        code: 500,
+        msg: e.message
+      });
+      done();
     }
-  });
+  })();
 });
 
 async function updateAccount(domain: string, vid: string, uid: string, payment: number, cache: any): Promise<any> {
@@ -472,7 +475,7 @@ async function updateAccount(domain: string, vid: string, uid: string, payment: 
   let balance0: number = null;
   let balance1: number = null;
   const gid = await cache.hgetAsync("vid-gid", vid);
-  if (gid !== null || gid !== "") {
+  if (gid !== null) {
     const group_entities = await cache.hgetAsync("group-entities", gid);
     const apportion: number = group_entities["apportion"];
     balance0 = payment * apportion;
@@ -511,14 +514,14 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       }
       const orderjson = await cache.hgetAsync("order-entities", order_id);
       if (orderjson === null || orderjson === "") {
-        await cache.setexAsync(cbflag, 30, JSON.stringify({
+        await set_for_response(cache, cbflag, {
           code: 404,
           msg: `Order ${order_id} not found in order-entities`
-        }));
+        });
         done();
         return;
       }
-      const order = await msgpack_encode(orderjson);
+      const order = await msgpack_decode(orderjson);
       const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       const updated_at = (new Date()).getTime();
       order["state_code"] = state_code;
@@ -529,25 +532,24 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         multi.zrem("new-orders-id", order_id);
         multi.zadd("new-pays-id", updated_at, order_id);
       }
-      const newOrder = await msgpack_decode(order);
+      const newOrder = await msgpack_encode(order);
       multi.hset("order-entities", order_id, newOrder);
       await multi.execAsync();
       if (state_code === 2) {
         const title = "参加计划　收入";
         await createAccount(domain, order["vehicle"]["id"], uid, order);
       }
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: order_id
-      }));
+      });
       done();
     } catch (err) {
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 500,
         msg: err.message
-      }), (err, result) => {
-        done();
       });
+      done();
     }
   })();
 });
@@ -671,9 +673,10 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
   const multi = bluebird.promisifyAll(cache.multi()) as Multi;
   for (const oid of oids) {
     const order = orders[oid];
-    const vid = order["vehicle"]["vid"];
+    const vid = order["vehicle"]["id"];
     const updated_at = order.updated_at.getTime();
     const newOrder = await msgpack_encode(order);
+    multi.zadd("orders-" + order["vehicle"]["uid"], updated_at, oid);
     multi.zadd("orders", updated_at, oid);
     multi.hset("vid-soid", vid, oid);
     multi.hset("orderid-vid", oid, vid);
@@ -717,22 +720,22 @@ processor.call("placeAnSaleOrder", (ctx: ProcessorContext, uid: string, domain: 
       } catch (err1) {
         log.error(err1);
       }
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 500,
         msg: err.message
-      }), (err, result) => {
-        done();
       });
+      done();
     }
     try {
-      await cache.setexAsync(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: order_id
-      }));
-      await sync_sale_orders(db, cache, domain, order_id);
+      });
+      await sync_sale_orders(db, cache, domain, uid, order_id);
       done();
     } catch (e) {
       log.error(e);
+      done();
     }
   })();
 });
@@ -749,7 +752,6 @@ processor.call("updateSaleOrder", (ctx: ProcessorContext, domain: any, order_id:
     piids.push(item);
     prices.push(items[item]);
   }
-
   (async () => {
     try {
       await db.query("BEGIN");
@@ -768,27 +770,27 @@ processor.call("updateSaleOrder", (ctx: ProcessorContext, domain: any, order_id:
       } catch (err1) {
         log.error(err1);
       }
-      cache.setex(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 500,
         msg: err.message
-      }), (err, result) => {
-        done();
       });
+      done();
     }
     try {
-      await cache.setexAsync(cbflag, 30, JSON.stringify({
+      await set_for_response(cache, cbflag, {
         code: 200,
         data: order_id
-      }));
+      });
       await sync_sale_orders(db, cache, domain, order_id);
       done();
     } catch (e) {
       log.error(e);
+      done();
     }
   })();
 });
 
-//　刷新所有
+// 刷新所有
 async function refresh_driver_orders(db: PGClient, cache: RedisClient, domain: string): Promise<void> {
   return sync_driver_orders(db, cache, domain, null);
 }
@@ -801,7 +803,7 @@ async function refresh_sale_orders(db: PGClient, cache: RedisClient, domain: str
   return sync_sale_orders(db, cache, domain, null);
 }
 
-//　刷新一个
+// 刷新一个
 async function refresh_driver_order(db: PGClient, cache: RedisClient, domain: string, uid: string, oid: string): Promise<void> {
   return sync_driver_orders(db, cache, domain, uid, oid);
 }
