@@ -488,7 +488,7 @@ async function updateAccount(domain: string, vid: string, uid: string, payment: 
 }
 
 async function createAccount(domain: string, vid: string, uid: string, order: Object): Promise<any> {
-  const balance = order["payment"];
+  const balance = order["summary"];
   const balance0 = balance * 0.2;
   const balance1 = balance * 0.8;
   return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, balance0, balance1);
