@@ -211,7 +211,7 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   return multi.execAsync();
 }
 
-processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object[], qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date, cbflag: string) => {
+processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: string, order_id: string, vid: string, plans: Object, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date, cbflag: string) => {
   log.info(`placeAnPlanOrder, domain: ${domain}, uid: ${uid}, order_id: ${order_id}, vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}, cbflag: ${cbflag}`);
   const db: PGClient = ctx.db;
   const cache: RedisClient = ctx.cache;
@@ -253,8 +253,15 @@ processor.call("placeAnPlanOrder", (ctx: ProcessorContext, domain: string, uid: 
           await db.query("INSERT INTO order_items(id, oid, piid, price) VALUES($1,$2,$3,$4)", [item_id, order_id, piid, plans[pid][piid]]);
         }
       }
+      const prep = await rpc(domain, process.env["PLAN"], uid, "getAvailablePlans");
+      if (prep["code"] === 200) {
+        const pids = Object.keys(plans);
+        const pls = prep["data"].filter(p => p["show_in_index"]).filter(p => pids.indexOf(p["id"]) != -1);
+        for (const p of pls) {
+          await createAccount(domain, vid, p["id"], uid);
+        }
+      }
       await db.query("COMMIT");
-      // await createAccount(domain, vid, uid, order_id);
       await set_for_response(cache, cbflag, {
         code: 200,
         data: { id: order_id, no: order_no }
@@ -451,7 +458,7 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
         await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
       }
       await db.query("COMMIT");
-      await updateAccount(domain, vid, uid, payment, cache);
+      //await updateAccount(domain, vid, uid, payment, cache);
       await sync_driver_orders(db, cache, domain, uid, order_id);
       await set_for_response(cache, cbflag, {
         code: 200,
@@ -470,7 +477,7 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   })();
 });
 
-async function updateAccount(domain: string, vid: string, uid: string, payment: number, cache: any): Promise<any> {
+async function updateAccount(domain: string, vid: string, pid: string, oid: string, uid: string, title: string, payment: number, cache: any): Promise<any> {
   const balance = payment;
   let balance0: number = null;
   let balance1: number = null;
@@ -484,14 +491,11 @@ async function updateAccount(domain: string, vid: string, uid: string, payment: 
     balance0 = payment * 0.2;
     balance1 = payment * 0.8;
   }
-  return rpc(domain, process.env["WALLET"], null, "updateAccountbalance", uid, vid, 1, balance0, balance1);
+  return rpc(domain, process.env["WALLET"], uid, "updateAccountBalance", vid, pid, 1, 1, balance0, balance1, 0, title, oid, uid);
 }
 
-async function createAccount(domain: string, vid: string, uid: string, order: Object): Promise<any> {
-  const balance = order["summary"];
-  const balance0 = balance * 0.2;
-  const balance1 = balance * 0.8;
-  return rpc(domain, process.env["WALLET"], null, "createAccount", uid, 1, vid, balance0, balance1);
+async function createAccount(domain: string, vid: string, pid: string, uid: string): Promise<any> {
+  return rpc(domain, process.env["WALLET"], uid, "createAccount", vid, pid, uid);
 }
 
 processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: string, vid: string, order_id: string, state_code: number, state: string, cbflag: string) => {
@@ -545,7 +549,8 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       await multi.execAsync();
       if (state_code === 2) {
         const title = "参加计划　收入";
-        await createAccount(domain, order["vehicle"]["id"], uid, order);
+        const plan = order["plans"].filter(p => p["show_in_index"]);
+        await updateAccount(domain, order["vehicle"]["id"], plan ? plan["id"] : null, order["id"], uid, title, order["summary"], cache);
       }
       await set_for_response(cache, cbflag, {
         code: 200,

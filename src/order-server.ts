@@ -6,18 +6,6 @@ import * as uuid from "node-uuid";
 import * as http from "http";
 import { verify, uuidVerifier, stringVerifier, numberVerifier } from "hive-verify";
 
-declare module "redis" {
-  export interface RedisClient extends NodeJS.EventEmitter {
-    hgetAsync(key: string, field: string): Promise<any>;
-    hincrbyAsync(key: string, field: string, value: number): Promise<any>;
-    setexAsync(key: string, ttl: number, value: string): Promise<any>;
-    zrevrangebyscoreAsync(key: string, start: number, stop: number): Promise<any>;
-  }
-  export interface Multi extends NodeJS.EventEmitter {
-    execAsync(): Promise<any>;
-  }
-}
-
 const allowAll: Permission[] = [["mobile", true], ["admin", true]];
 const mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 const adminOnly: Permission[] = [["mobile", false], ["admin", true]];
@@ -289,7 +277,7 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
   });
 });
 
-server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
+server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: Object, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
   log.info(`placeAnPlanOrder vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}`);
   if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
     rep({
