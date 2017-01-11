@@ -548,7 +548,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       multi.hset("order-entities", order_id, newOrder);
       await multi.execAsync();
       if (state_code === 2) {
-        const title = "参加计划　收入";
+        const title = "加入计划充值";
         const plan = order["plans"].filter(p => p["show_in_index"]);
         await updateAccount(domain, order["vehicle"]["id"], plan ? plan["id"] : null, order["id"], uid, title, order["summary"], cache);
       }
