@@ -508,7 +508,15 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
   (async () => {
     try {
       if (state_code === 2) {
-        await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
+        const orep = await db.query("SELECT state_code FROM orders WHERE id = $1", [order_id]);
+        if (orep["rows"][0]["state_code"] == state_code) {
+          set_for_response(cache, cbflag, {
+            code: 500,
+            msg: "重复更新订单状态"
+          })
+        } else {
+          await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
+        }
       } else {
         await db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id]);
       }
