@@ -1,22 +1,10 @@
-import { Server, ServerContext, ServerFunction, CmdPacket, Permission, wait_for_response } from "hive-service";
+import { Server, ServerContext, ServerFunction, CmdPacket, Permission, wait_for_response, msgpack_decode } from "hive-service";
 import { Client as PGClient } from "pg";
 import { RedisClient } from "redis";
 import * as bunyan from "bunyan";
 import * as uuid from "node-uuid";
 import * as http from "http";
 import { verify, uuidVerifier, stringVerifier, numberVerifier } from "hive-verify";
-
-declare module "redis" {
-  export interface RedisClient extends NodeJS.EventEmitter {
-    hgetAsync(key: string, field: string): Promise<any>;
-    hincrbyAsync(key: string, field: string, value: number): Promise<any>;
-    setexAsync(key: string, ttl: number, value: string): Promise<any>;
-    zrevrangebyscoreAsync(key: string, start: number, stop: number): Promise<any>;
-  }
-  export interface Multi extends NodeJS.EventEmitter {
-    execAsync(): Promise<any>;
-  }
-}
 
 const allowAll: Permission[] = [["mobile", true], ["admin", true]];
 const mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
@@ -71,13 +59,13 @@ server.call("getAllOrders", allowAll, "获取所有订单", "可以根据条件�
       let cursor = offset;
       const len = (oids.length - 1 < limit) ? oids.length : limit - offset + 1;
       const orders = [];
-      for (; cursor < len && orders.length < len; cursor ++ ) {
+      for (; cursor < len && orders.length < len; cursor++) {
         const oid = oids[cursor];
         const orderjson = await cache.hgetAsync("order-entites", oid);
         if (!orderjson) continue;
         let order = null;
         try {
-          order = JSON.parse(orderjson);
+          order = await msgpack_decode(orderjson);
         } catch (e) {
           log.error(e);
           continue;
@@ -132,13 +120,22 @@ server.call("getOrder", allowAll, "获取订单详情", "获得订单详情", (c
       log.error(err);
       rep({ code: 500, msg: err });
     } else if (result && result !== "") {
-      const nowDate = (new Date()).getTime() + 28800000;
-      rep({ code: 200, data: JSON.parse(result), nowDate: nowDate });
+      (async () => {
+        try {
+          const order = await msgpack_decode(result);
+          const nowDate = (new Date()).getTime();
+          rep({ code: 200, data: order, nowDate: nowDate });
+        } catch (e) {
+          log.info(e);
+          rep({ code: 500, msg: e });
+        }
+      })();
     } else {
       rep({ code: 404, msg: "Order not found" });
     }
   });
 });
+
 
 server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的所有订单", (ctx: ServerContext, rep: ((result: any) => void), offset: number, limit: number) => {
   log.info(`getOrders, offset: ${offset}, limit: ${limit}`);
@@ -154,7 +151,7 @@ server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的�
     if (err) {
       log.error(err);
       rep({ code: 500, msg: err.message });
-    } else if (result !== null && result.length === 0) {
+    } else if (result !== null && result.length !== 0) {
       const multi = ctx.cache.multi();
       for (const oid of result) {
         multi.hget("order-entities", oid);
@@ -163,8 +160,21 @@ server.call("getOrders", allowAll, "获取订单列表", "获得一个用户的�
         if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
-          const nowDate = (new Date()).getTime() + 28800000;
-          rep({ code: 200, data: replies.map(e => JSON.parse(e)), nowDate: nowDate });
+          const nowDate = (new Date()).getTime();
+          (async () => {
+            const orders = [];
+            try {
+              for (const pkt of replies) {
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  orders.push(order);
+                }
+              }
+              rep({ code: 200, data: orders, nowDate: nowDate });
+            } catch (e) {
+              rep({ code: 500, msg: e.message });
+            }
+          })();
         }
       });
     } else {
@@ -191,7 +201,15 @@ server.call("getOrderState", allowAll, "获取订单状态", "获得订单的状
         if (err1) {
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
-          rep({ code: 200, data: JSON.parse(result1) });
+          (async () => {
+            try {
+              const order = await msgpack_decode(result1);
+              rep({ code: 200, data: order });
+            } catch (e) {
+              log.info(e);
+              rep({ code: 500, msg: e.message });
+            }
+          })();
         } else {
           rep({ code: 404, msg: "Order not found" });
         }
@@ -225,20 +243,32 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
         if (err2 || replies === null || replies.length === 0) {
           rep({ code: 404, msg: "not found" });
         } else {
-          const user_orders = replies.map(e => JSON.parse(e));
-          const driver_orders = user_orders.filter(order => order !== null && order["type"] === 1 && order["vehicle"]["id"] === vid);
-          const drivers = [];
-          for (const driver_order of driver_orders) {
-            for (const d of driver_order["drivers"]) {
-              drivers.push(d);
+          (async () => {
+            const user_orders = [];
+            try {
+              for (const pkt of replies) {
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  user_orders.push(order);
+                }
+              }
+              const driver_orders = user_orders.filter(order => order !== null && order["type"] === 1 && order["vehicle"]["id"] === vid);
+              const drivers = [];
+              for (const driver_order of driver_orders) {
+                for (const d of driver_order["drivers"]) {
+                  drivers.push(d);
+                }
+              }
+              if (drivers.length === 0) {
+                rep({ code: 404, msg: "Drivers not found" });
+              } else {
+                const nowDate = (new Date()).getTime();
+                rep({ code: 200, data: drivers });
+              }
+            } catch (e) {
+              rep({ code: 500, msg: e.message });
             }
-          }
-          if (drivers.length === 0) {
-            rep({ code: 404, msg: "Drivers not found" });
-          } else {
-            const nowDate = (new Date()).getTime() + 28800000;
-            rep({ code: 200, data: drivers });
-          }
+          })();
         }
       });
     } else {
@@ -247,9 +277,9 @@ server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "
   });
 });
 
-server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: any, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
+server.call("placeAnPlanOrder", allowAll, "用户下计划订单", "用户下计划订单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, plans: Object, qid: string, pmid: string, promotion: number, service_ratio: number, summary: number, payment: number, v_value: number, expect_at: Date) => {
   log.info(`placeAnPlanOrder vid: ${vid}, plans: ${JSON.stringify(plans)}, qid: ${qid}, pmid: ${pmid}, promotion: ${promotion}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}, v_value: ${v_value}, expect_at: ${expect_at}`);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("promotion", promotion), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
+  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
     rep({
       code: 400,
       msg: errors.join("\n")
@@ -295,9 +325,7 @@ server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状
   })) {
     return;
   }
-
   const cache = ctx.cache;
-
   (async () => {
     try {
       const order_id = await cache.hgetAsync("orderNo-id", order_no);
@@ -305,26 +333,21 @@ server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状
         rep({ code: 404, msg: "Order no not found" });
         return;
       }
-
-      const vid = await cache.hgetAsync("orderid-vid", order_id);
+      const vid = await cache.hgetAsync("orderid-vid", String(order_id));
       if (!vid) {
         rep({ code: 404, msg: "Order not found" });
         return;
       }
-
       const callback = uuid.v1();
       const domain = ctx.domain;
-
-      const pkt: CmdPacket = { cmd: "updateOrderState", args: [domain, uid, vid, order_id, state_code, state, callback] };
+      const pkt: CmdPacket = { cmd: "updateOrderState", args: [domain, uid, vid, String(order_id), state_code, state, callback] };
       ctx.publish(pkt);
-
       wait_for_response(ctx.cache, callback, rep);
     } catch (err) {
       log.error(err);
       rep({ code: 500, msg: err.message });
     }
   })();
-
 });
 
 server.call("updateOrderNo", allowAll, "更新订单编号", "更新订单编号", (ctx: ServerContext, rep: ((result: any) => void), order_no: string) => {
@@ -380,8 +403,16 @@ server.call("getPlanOrderByVehicle", allowAll, "通过vid获取已生效计划�
           log.error(err1);
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
-          let nowDate = (new Date()).getTime() + 28800000;
-          rep({ code: 200, data: JSON.parse(result1), nowDate: nowDate });
+          (async () => {
+            try {
+              let nowDate = (new Date()).getTime();
+              const order = await msgpack_decode(result1);
+              rep({ code: 200, data: order, nowDate: nowDate });
+            } catch (e) {
+              log.info(e);
+              rep({ code: 500, msg: e.message });
+            }
+          })();
         } else {
           rep({ code: 404, msg: "Order not found" });
         }
@@ -417,7 +448,21 @@ server.call("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "�
         } else if (replies1 === null || replies1.length === 0) {
           rep({ code: 404, msg: "Orders not found" });
         } else {
-          rep({ code: 200, data: replies1.map(e => JSON.parse(e)) });
+          (async () => {
+            const orders = [];
+            try {
+              for (const pkt of replies1) {
+                if (pkt !== null) {
+                  const order = await msgpack_decode(pkt);
+                  orders.push(order);
+                }
+              }
+              rep({ code: 200, data: orders });
+            } catch (e) {
+              log.info(e);
+              rep({ code: 500, msg: e });
+            }
+          })();
         }
       });
     }
@@ -481,7 +526,15 @@ server.call("getSaleOrder", allowAll, "根据vid获取第三方保险", "根据v
           log.error(err1);
           rep({ code: 500, msg: err1.message });
         } else if (result1) {
-          rep({ code: 200, data: JSON.parse(result1) });
+          (async () => {
+            try {
+              const order = await msgpack_decode(result1);
+              rep({ code: 200, data: order });
+            } catch (e) {
+              log.info(e);
+              rep({ code: 500, msg: e.message });
+            }
+          })();
         } else {
           rep({ code: 404, msg: "Order not found" });
         }
@@ -492,10 +545,27 @@ server.call("getSaleOrder", allowAll, "根据vid获取第三方保险", "根据v
   });
 });
 
-server.call("refresh", allowAll, "refresh", "刷新订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
-    log.info("refresh");
-    const domain = ctx.domain;
-    const pkt: CmdPacket = { cmd: "refresh", args: [domain] };
-    ctx.publish(pkt);
-    rep({ code: 200, msg: "success" });
+server.call("refresh", allowAll, "refresh", "刷新所有订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
+  log.info("refresh");
+  const domain = ctx.domain;
+  const pkt: CmdPacket = { cmd: "refresh", args: [domain] };
+  ctx.publish(pkt);
+  rep({ code: 200, msg: "success" });
+});
+
+
+server.call("refresh_order", allowAll, "refresh", "刷新单个订单数据", (ctx: ServerContext, rep: ((result: any) => void), type: number, uid: string, oid: string) => {
+  log.info("refresh");
+  if (!verify([uuidVerifier("uid", uid), numberVerifier("type", type), stringVerifier("oid", oid)], (errors: string[]) => {
+    rep({
+      code: 400,
+      msg: errors.join("\n")
+    });
+  })) {
+    return;
+  }
+  const domain = ctx.domain;
+  const pkt: CmdPacket = { cmd: "refresh_order", args: [domain, type, uid, oid] };
+  ctx.publish(pkt);
+  rep({ code: 200, msg: "success" });
 });
