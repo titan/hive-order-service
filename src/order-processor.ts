@@ -551,15 +551,15 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
   (async () => {
     try {
       const orep = await db.query("SELECT state_code FROM orders WHERE id = $1", [order_id]);
-      const new_state_code = parseInt(orep["rows"][0]["state_code"]);
+      const old_state_code = parseInt(orep["rows"][0]["state_code"]);
       if (state_code === 2) {
-        if (new_state_code == state_code) {
+        if (old_state_code == state_code) {
           set_for_response(cache, cbflag, {
             code: 300,
             msg: "重复更新订单状态"
           });
           return;
-        } else if (new_state_code === 1) {
+        } else if (old_state_code === 1) {
           await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
         } else {
           set_for_response(cache, cbflag, {
@@ -595,7 +595,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       const newOrder = await msgpack_encode(order);
       multi.hset("order-entities", order_id, newOrder);
       await multi.execAsync();
-      if (state_code === 2 && new_state_code === 1) {
+      if (state_code === 2 && old_state_code === 1) {
         const title = "加入计划充值";
         const plan = order["plans"].filter(p => p["show_in_index"]);
         log.info("plan" + JSON.stringify(plan));
