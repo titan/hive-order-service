@@ -5,6 +5,8 @@ import { CustomerMessage } from "recommend-library";
 import * as bluebird from "bluebird";
 import * as bunyan from "bunyan";
 import * as uuid from "uuid";
+import * as http from "http";
+import * as queryString from "querystring";
 
 export const processor = new Processor();
 
@@ -21,6 +23,8 @@ declare module "redis" {
     execAsync(): Promise<any>;
   }
 }
+
+const wxhost = process.env["WX_ENV"] === "test" ? "dev.fengchaohuzhu.com" : "m.fengchaohuzhu.com";
 
 const log = bunyan.createLogger({
   name: "order-processor",
@@ -480,7 +484,8 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   })();
 });
 
-async function updateAccount(domain: string, vid: string, pid: string, oid: string, uid: string, title: string, payment: number, cache: any): Promise<any> {
+async function updateAccount(domain: string, vid: string, pid: string, plan: string, openid: string, no: string, oid: string, uid: string, title: string, payment: number, cache: any): Promise<any> {
+  log.info("plan title" + plan);
   const balance = payment;
   let balance0: number = null;
   let balance1: number = null;
@@ -494,6 +499,38 @@ async function updateAccount(domain: string, vid: string, pid: string, oid: stri
     balance0 = payment * 0.2;
     balance1 = payment * 0.8;
   }
+  const postData = queryString.stringify({
+    "user": openid,
+    "OrderNo": no,
+    "Plan": "好司机 互助计划",
+    "Price": payment,
+    "orderId": oid
+  });
+  const options = {
+    hostname: wxhost,
+    port: 80,
+    path: "/wx/wxpay/tmsgPaySuccess",
+    method: "GET",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Length": Buffer.byteLength(postData)
+    }
+  };
+  const req = http.request(options, (res) => {
+    log.info("Status: " + res.statusCode);
+    res.setEncoding("utf8");
+    res.on("data", (chunk) => {
+      console.log(`BODY: ${chunk}`);
+    });
+    res.on("end", () => {
+      console.log("No more data in response.");
+    });
+  });
+  req.on("error", (e) => {
+    console.log(`problem with request: ${e.message}`);
+  });
+  req.write(postData);
+  req.end();
   return rpc(domain, process.env["WALLET"], uid, "updateAccountBalance", vid, pid, 1, 1, balance0, balance1, 0, title, oid, uid);
 }
 
@@ -511,18 +548,25 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
   const balance: number = null;
   const start_at = null;
   const paid_at = new Date();
-
   (async () => {
     try {
+      const orep = await db.query("SELECT state_code FROM orders WHERE id = $1", [order_id]);
+      const old_state_code = parseInt(orep["rows"][0]["state_code"]);
       if (state_code === 2) {
-        const orep = await db.query("SELECT state_code FROM orders WHERE id = $1", [order_id]);
-        if (orep["rows"][0]["state_code"] == state_code) {
+        if (old_state_code == state_code) {
           set_for_response(cache, cbflag, {
-            code: 500,
+            code: 300,
             msg: "重复更新订单状态"
-          })
-        } else {
+          });
+          return;
+        } else if (old_state_code === 1) {
           await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
+        } else {
+          set_for_response(cache, cbflag, {
+            code: 300,
+            msg: "不能倒序更改订单状态"
+          });
+          return;
         }
       } else {
         await db.query("UPDATE orders SET state_code = $1, state = $2, updated_at = $3 WHERE id = $4", [state_code, state, paid_at, order_id]);
@@ -537,6 +581,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         return;
       }
       const order = await msgpack_decode(orderjson);
+      const openid = await cache.hgetAsync("wxuser", uid);
       const multi = bluebird.promisifyAll(cache.multi()) as Multi;
       const updated_at = (new Date()).getTime();
       order["state_code"] = state_code;
@@ -550,10 +595,11 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
       const newOrder = await msgpack_encode(order);
       multi.hset("order-entities", order_id, newOrder);
       await multi.execAsync();
-      if (state_code === 2) {
+      if (state_code === 2 && old_state_code === 1) {
         const title = "加入计划充值";
         const plan = order["plans"].filter(p => p["show_in_index"]);
-        await updateAccount(domain, order["vehicle"]["id"], plan ? plan["id"] : null, order["id"], uid, title, order["summary"], cache);
+        log.info("plan" + JSON.stringify(plan));
+        await updateAccount(domain, order["vehicle"]["id"], plan ? plan["id"] : null, plan ? plan["title"] : "好车主/互助计划", String(openid), order["no"], order["id"], uid, title, order["summary"], cache);
       }
       await set_for_response(cache, cbflag, {
         code: 200,
