@@ -138,10 +138,21 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
   const vehicles = [];
   const quotations = [];
 
+  const maybe_driver_order_binaries = await cache.hvalsAsync("order-entities");
+  const maybe_driver_orders = await Promise.all(maybe_driver_order_binaries.map(o => msgpack_decode(o)));
+  const driver_orders = maybe_driver_orders.filter(o => o["type"] === 1);
+
   for (const vid of vids) {
     const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid);
     if (vrep["code"] === 200) {
-      vehicles.push(vrep["data"]);
+      const vehicle = vrep["data"];
+      for (const driver_order of driver_orders) {
+        if (driver_order["vehicle"]["id"] === vehicle["id"]) {
+          delete vehicle["drivers"]
+          vehicle["drivers"] = driver_order["vehicle"]["drivers"];
+        }
+      }
+      vehicles.push(vehicle);
     }
   }
 
@@ -171,16 +182,18 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     }
   }
 
-  const pps = pids.map(pid => rpc<Object>(domain, process.env["PLAN"], uid, "getPlan", pid)); // fetch plan in parallel way
+  const pps = pids.map(pid => rpc<Object>(domain, process.env["PLAN"], uid, "getPlan", pid, true)); // fetch plan in parallel way
   const preps = await Promise.all(pps);
   const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
   for (const oid of oids) {
     const order = orders[oid];
     for (const plan of plans) {
+      delete plan["rules"];
       if (order["pids"].hasOwnProperty(plan["id"])) {
         order["plans"].push(plan); // a plan may belong to many orders
       }
       for (const planitem of plan["items"]) {
+        delete planitem["description"];
         for (const orderitem of order["items"]) {
           if (planitem["id"] === orderitem["piid"]) {
             orderitem["plan_item"] = planitem;
@@ -408,6 +421,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
     for (const oid of oids) {
       const order = orders[oid];
       if (vehicle["id"] === order.vid) {
+        vehicle["drivers"] = []
         order.vehicle = vehicle;
       }
     }
@@ -417,6 +431,7 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
       const order = orders[oid];
       for (const drv of order.dids) {
         if (drv === driver["id"]) {
+          order.vehicle.drivers.push(driver);
           order.drivers.push(driver);
         }
       }
@@ -910,8 +925,9 @@ processor.call("refresh", (ctx: ProcessorContext, domain: string) => {
   const done = ctx.done;
   (async () => {
     try {
-      await refresh_plan_orders(db, cache, domain);
+      await cache.delAsync("order-entities");
       await refresh_driver_orders(db, cache, domain);
+      await refresh_plan_orders(db, cache, domain);
       await refresh_sale_orders(db, cache, domain);
       log.info("refresh done!");
       done();
