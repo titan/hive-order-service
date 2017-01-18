@@ -573,6 +573,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
             code: 300,
             msg: "重复更新订单状态"
           });
+          done();
           return;
         } else if (old_state_code === 1) {
           await db.query("UPDATE orders SET state_code = $1, state = $2, paid_at = $3, updated_at = $4 WHERE id = $5", [state_code, state, paid_at, paid_at, order_id]);
@@ -581,6 +582,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
             code: 300,
             msg: "不能倒序更改订单状态"
           });
+          done();
           return;
         }
       } else {
@@ -614,7 +616,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         const title = "加入计划充值";
         const plan = order["plans"].filter(p => p["show_in_index"]);
         log.info("plan" + JSON.stringify(plan));
-        await updateAccount(domain, order["vehicle"]["id"], plan ? plan["id"] : null, plan ? plan["title"] : "好车主/互助计划", String(openid), order["no"], order["id"], uid, title, order["summary"], cache);
+        await updateAccount(domain, order["vehicle"]["id"], plan ? plan[0]["id"] : null, plan ? plan[0]["title"] : "好车主/互助计划", String(openid), order["no"], order["id"], uid, title, order["summary"], cache);
       }
       await set_for_response(cache, cbflag, {
         code: 200,
