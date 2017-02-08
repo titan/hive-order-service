@@ -1,4 +1,4 @@
-import { Server, ServerContext, ServerFunction, CmdPacket, Permission, wait_for_response, msgpack_decode } from "hive-service";
+import { Server, ServerContext, ServerFunction, CmdPacket, Permission, waiting, wait_for_response, msgpack_decode } from "hive-service";
 import { Client as PGClient } from "pg";
 import { RedisClient } from "redis";
 import * as bunyan from "bunyan";
@@ -306,13 +306,11 @@ server.call("placeAnDriverOrder", allowAll, "用户下司机划订单", "用户�
   })) {
     return;
   }
-  const callback = uuid.v1();
   const uid = ctx.uid;
   const domain = ctx.domain;
-  const args = [domain, uid, vid, dids, summary, payment, callback];
-  const pkt: CmdPacket = { cmd: "placeAnDriverOrder", args: [domain, uid, vid, dids, summary, payment, callback] };
+  const pkt: CmdPacket = { cmd: "placeAnDriverOrder", args: [domain, uid, vid, dids, summary, payment] };
   ctx.publish(pkt);
-  wait_for_response(ctx.cache, callback, rep);
+  waiting(ctx, rep);
 });
 
 server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状态", (ctx: ServerContext, rep: ((result: any) => void), uid: string, order_no: string, state_code: number, state: string) => {

@@ -456,11 +456,10 @@ async function sync_driver_orders(db: PGClient, cache: RedisClient, domain: stri
   return multi.execAsync();
 }
 
-processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid: string, vid: string, dids: string[], summary: number, payment: number, cbflag: string) => {
-  log.info(`placeAnDriverOrder, domain: ${domain}, uid: ${uid}, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}, cbflag: ${cbflag}`);
+processor.callAsync("placeAnDriverOrder", async (ctx: ProcessorContext, domain: string, uid: string, vid: string, dids: string[], summary: number, payment: number) => {
+  log.info(`placeAnDriverOrder, domain: ${domain}, uid: ${uid}, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}`);
   const db: PGClient = ctx.db;
   const cache: RedisClient = ctx.cache;
-  const done = ctx.done;
   const order_id = uuid.v1();
   const item_id = uuid.v1();
   const event_id = uuid.v1();
@@ -470,33 +469,35 @@ processor.call("placeAnDriverOrder", (ctx: ProcessorContext, domain: string, uid
   const data = {
     msg: "添加驾驶人"
   };
-  (async () => {
-    try {
-      await db.query("BEGIN");
-      await db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, data]);
-      await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment]);
+  try {
+    await db.query("BEGIN");
+    await db.query("INSERT INTO order_events(id, oid, uid, data) VALUES($1,$2,$3,$4)", [event_id, order_id, uid, data]);
+    await db.query("INSERT INTO orders(id, vid, type, state_code, state, summary, payment) VALUES($1,$2,$3,$4,$5,$6,$7)", [order_id, vid, type, state_code, state, summary, payment]);
 
-      for (const did of dids) {
-        await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
-      }
-      await db.query("COMMIT");
-      //await updateAccount(domain, vid, uid, payment, cache);
-      await sync_driver_orders(db, cache, domain, uid, order_id);
-      await set_for_response(cache, cbflag, {
-        code: 200,
-        data: order_id
-      });
-      log.info("placeAnDriverOrder done");
-      done();
-    } catch (e) {
-      await db.query("ROLLBACK");
-      await set_for_response(cache, cbflag, {
-        code: 500,
-        msg: e.message
-      });
-      done();
+    for (const did of dids) {
+      await db.query("INSERT INTO driver_order_ext(oid,pid) VALUES($1,$2)", [order_id, did]);
     }
-  })();
+    await db.query("COMMIT");
+    //await updateAccount(domain, vid, uid, payment, cache);
+    await sync_driver_orders(db, cache, domain, uid, order_id);
+    const result = await db.query("SELECT p.oid FROM orders AS o INNER JOIN plan_order_ext AS p ON o.id = p.oid WHERE o.vid = $1", [vid]);
+    if (result.rows.length > 0) {
+      const poid = result.rows[0].oid;
+      await sync_plan_orders(db, cache, domain, uid, poid);
+    }
+    log.info("placeAnDriverOrder done");
+    return {
+      code: 200,
+      data: order_id
+    };
+  } catch (e) {
+    log.error(e);
+    await db.query("ROLLBACK");
+    return {
+      code: 500,
+      msg: e.message
+    };
+  }
 });
 
 async function updateAccount(domain: string, vid: string, pid: string, plan: string, openid: string, no: string, oid: string, uid: string, title: string, payment: number, cache: any): Promise<any> {
