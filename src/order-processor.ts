@@ -147,12 +147,22 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
       const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid);
       if (vrep["code"] === 200) {
         const vehicle = vrep["data"];
+        const drivers = [];
         for (const driver_order of driver_orders) {
           if (driver_order["vehicle"]["id"] === vehicle["id"]) {
-            delete vehicle["drivers"]
-            vehicle["drivers"] = driver_order["vehicle"]["drivers"];
+            for (const driver of driver_order["vehicle"]["drivers"]) {
+              drivers.push(driver);
+            }
           }
         }
+        delete vehicle["drivers"];
+        vehicle["drivers"] = drivers;
+        // for (const driver_order of driver_orders) {
+        // if (driver_order["vehicle"]["id"] === vehicle["id"]) {
+        // delete vehicle["drivers"]
+        // vehicle["drivers"] = driver_order["vehicle"]["drivers"];
+        // }
+        // }
         vehicles.push(vehicle);
       }
     }
