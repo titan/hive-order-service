@@ -4,7 +4,7 @@ import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
 import * as bluebird from "bluebird";
 import * as bunyan from "bunyan";
-import * as uuid from "uuid";
+import * as uuid from "node-uuid";
 import * as http from "http";
 import * as queryString from "querystring";
 
