@@ -173,7 +173,11 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
           }
         }
         delete vehicle["drivers"];
-        vehicle["drivers"] = drivers;
+        const unique_drivers = drivers.reduce((acc, x) => {
+          acc[x["id"]] = x;
+          return acc;
+        }, {});
+        vehicle["drivers"] = Object.keys(unique_drivers).map(x => unique_drivers[x]);
         vehicles.push(vehicle);
       }
     }
