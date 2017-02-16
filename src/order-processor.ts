@@ -10,20 +10,6 @@ import * as queryString from "querystring";
 
 export const processor = new Processor();
 
-declare module "redis" {
-  export interface RedisClient extends NodeJS.EventEmitter {
-    incrAsync(key: string): Promise<any>;
-    hgetAsync(key: string, field: string): Promise<any>;
-    hincrbyAsync(key: string, field: string, value: number): Promise<any>;
-    lpushAsync(key: string, value: string | number | Buffer): Promise<any>;
-    setexAsync(key: string, ttl: number, value: string): Promise<any>;
-    zrevrangebyscoreAsync(key: string, start: number, stop: number): Promise<any>;
-  }
-  export interface Multi extends NodeJS.EventEmitter {
-    execAsync(): Promise<any>;
-  }
-}
-
 const wxhost = process.env["WX_ENV"] === "test" ? "dev.fengchaohuzhu.com" : "m.fengchaohuzhu.com";
 
 const log = bunyan.createLogger({
@@ -121,16 +107,47 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     const vidstmp = [];
     const qidstmp = [];
     const pidstmp = [];
-    const piidstmp = [];
     for (const oid of oids) {
       vidstmp.push(orders[oid]["vid"]);
       qidstmp.push(orders[oid]["qid"]);
       for (const pid of Object.keys(orders[oid]["pids"])) {
         pidstmp.push(pid);
       }
-      for (const item of orders[oid]["items"]) {
-        piidstmp.push(item["plan_item"]);
-      }
+      orders[oid]["items"].sort((a, b) => {
+        const aid = a["id"];
+        const bid = b["id"];
+        if (aid === "00000000-0000-0000-0000-000000000005") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000005") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000006") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000006") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000007") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000007") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000001") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000001") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000002") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000002") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000003") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000003") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000004") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000004") {
+          return 1;
+        } else {
+          return 0;
+        }
+      });
     }
     const vids = [... new Set(vidstmp)];
     const qids = [... new Set(qidstmp)];
@@ -157,12 +174,6 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
         }
         delete vehicle["drivers"];
         vehicle["drivers"] = drivers;
-        // for (const driver_order of driver_orders) {
-        // if (driver_order["vehicle"]["id"] === vehicle["id"]) {
-        // delete vehicle["drivers"]
-        // vehicle["drivers"] = driver_order["vehicle"]["drivers"];
-        // }
-        // }
         vehicles.push(vehicle);
       }
     }
@@ -697,14 +708,10 @@ async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string
   const vidstmp = [];
   const qidstmp = [];
   const pidstmp = [];
-  const piidstmp = [];
   for (const oid of oids) {
     vidstmp.push(orders[oid]["vid"]);
     qidstmp.push(orders[oid]["qid"]);
     pidstmp.push(orders[oid]["pid"]);
-    for (const item of orders[oid]["items"]) {
-      piidstmp.push(item["plan_item"]);
-    }
   }
   const vids = [... new Set(vidstmp)];
   const qids = [... new Set(qidstmp)];
