@@ -69,163 +69,178 @@ async function increase_order_no(cache): Promise<number> {
 async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
   const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.pid AS e_pid, e.service_ratio AS e_service_ratio, e.expect_at AS e_expect_at, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid FROM plan_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND oi.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
   const orders = {};
-  for (const row of result.rows) {
-    if (orders.hasOwnProperty(row.o_id)) {
-      orders[row.o_id]["items"].push({
-        id: row.oi_id,
-        oid: row.oi_oid,
-        piid: row.oi_piid,
-        plan_item: null,
-        price: row.oi_price
-      });
-      orders[row.o_id]["pids"][row.e_pid] = 0;
-    } else {
-      const pids = {};
-      pids[row.e_pid] = 0;
-      const order = {
-        id: row.o_id,
-        no: trim(row.o_no),
-        type: row.o_type,
-        state_code: row.o_state_code,
-        state: trim(row.o_state),
-        summary: row.o_summary,
-        payment: row.o_payment,
-        v_value: row.vehicle_real_value,
-        start_at: row.o_start_at,
-        stop_at: row.o_stop_at,
-        vid: row.o_vid,
-        vehicle: null,
-        pids: pids,
-        plans: [],
-        qid: row.e_qid,
-        quotation: null,
-        service_ratio: row.e_service_ratio,
-        expect_at: row.e_expect_at,
-        items: [{
+  try {
+    for (const row of result.rows) {
+      if (orders.hasOwnProperty(row.o_id)) {
+        orders[row.o_id]["items"].push({
           id: row.oi_id,
           oid: row.oi_oid,
           piid: row.oi_piid,
           plan_item: null,
           price: row.oi_price
-        }],
-        created_at: row.o_created_at,
-        updated_at: row.o_updated_at,
-        paid_at: row.o_paid_at
-      };
-      orders[row.o_id] = order;
+        });
+        orders[row.o_id]["pids"][row.e_pid] = 0;
+      } else {
+        const pids = {};
+        pids[row.e_pid] = 0;
+        const order = {
+          id: row.o_id,
+          no: trim(row.o_no),
+          type: row.o_type,
+          state_code: row.o_state_code,
+          state: trim(row.o_state),
+          summary: row.o_summary,
+          payment: row.o_payment,
+          v_value: row.vehicle_real_value,
+          start_at: row.o_start_at,
+          stop_at: row.o_stop_at,
+          vid: row.o_vid,
+          vehicle: null,
+          pids: pids,
+          plans: [],
+          qid: row.e_qid,
+          quotation: null,
+          service_ratio: row.e_service_ratio,
+          expect_at: row.e_expect_at,
+          items: [{
+            id: row.oi_id,
+            oid: row.oi_oid,
+            piid: row.oi_piid,
+            plan_item: null,
+            price: row.oi_price
+          }],
+          created_at: row.o_created_at,
+          updated_at: row.o_updated_at,
+          paid_at: row.o_paid_at
+        };
+        orders[row.o_id] = order;
+      }
     }
-  }
 
-  const oids = Object.keys(orders);
-  const vidstmp = [];
-  const qidstmp = [];
-  const pidstmp = [];
-  const piidstmp = [];
-  for (const oid of oids) {
-    vidstmp.push(orders[oid]["vid"]);
-    qidstmp.push(orders[oid]["qid"]);
-    for (const pid of Object.keys(orders[oid]["pids"])) {
-      pidstmp.push(pid);
+    const oids = Object.keys(orders);
+    const vidstmp = [];
+    const qidstmp = [];
+    const pidstmp = [];
+    const piidstmp = [];
+    for (const oid of oids) {
+      vidstmp.push(orders[oid]["vid"]);
+      qidstmp.push(orders[oid]["qid"]);
+      for (const pid of Object.keys(orders[oid]["pids"])) {
+        pidstmp.push(pid);
+      }
+      for (const item of orders[oid]["items"]) {
+        piidstmp.push(item["plan_item"]);
+      }
     }
-    for (const item of orders[oid]["items"]) {
-      piidstmp.push(item["plan_item"]);
+    const vids = [... new Set(vidstmp)];
+    const qids = [... new Set(qidstmp)];
+    const pids = [... new Set(pidstmp)];
+
+    const vehicles = [];
+    const quotations = [];
+
+    const maybe_driver_order_binaries = await cache.hvalsAsync("order-entities");
+    const maybe_driver_orders = await Promise.all(maybe_driver_order_binaries.map(o => msgpack_decode(o)));
+    const driver_orders = maybe_driver_orders.filter(o => o["type"] === 1);
+
+    for (const vid of vids) {
+      const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid);
+      if (vrep["code"] === 200) {
+        const vehicle = vrep["data"];
+        const drivers = [];
+        for (const driver_order of driver_orders) {
+          if (driver_order["vehicle"]["id"] === vehicle["id"]) {
+            for (const driver of driver_order["vehicle"]["drivers"]) {
+              drivers.push(driver);
+            }
+          }
+        }
+        delete vehicle["drivers"];
+        vehicle["drivers"] = drivers;
+        // for (const driver_order of driver_orders) {
+        // if (driver_order["vehicle"]["id"] === vehicle["id"]) {
+        // delete vehicle["drivers"]
+        // vehicle["drivers"] = driver_order["vehicle"]["drivers"];
+        // }
+        // }
+        vehicles.push(vehicle);
+      }
     }
-  }
-  const vids = [... new Set(vidstmp)];
-  const qids = [... new Set(qidstmp)];
-  const pids = [... new Set(pidstmp)];
 
-  const vehicles = [];
-  const quotations = [];
-
-  const maybe_driver_order_binaries = await cache.hvalsAsync("order-entities");
-  const maybe_driver_orders = await Promise.all(maybe_driver_order_binaries.map(o => msgpack_decode(o)));
-  const driver_orders = maybe_driver_orders.filter(o => o["type"] === 1);
-
-  for (const vid of vids) {
-    const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", vid);
-    if (vrep["code"] === 200) {
-      const vehicle = vrep["data"];
-      for (const driver_order of driver_orders) {
-        if (driver_order["vehicle"]["id"] === vehicle["id"]) {
-          delete vehicle["drivers"]
-          vehicle["drivers"] = driver_order["vehicle"]["drivers"];
+    for (const vehicle of vehicles) {
+      for (const oid of oids) {
+        const order = orders[oid];
+        if (vehicle["id"] === order["vid"]) {
+          order["vehicle"] = vehicle; // a vehicle may belong to many orders
         }
       }
-      vehicles.push(vehicle);
     }
-  }
 
-  for (const vehicle of vehicles) {
+    for (const qid of qids) {
+      const qrep = await rpc<Object>(domain, process.env["QUOTATION"], uid, "getQuotation", qid);
+      if (qrep["code"] === 200) {
+        quotations.push(qrep["data"]);
+      }
+    }
+
+    for (const quotation of quotations) {
+      for (const oid of oids) {
+        const order = orders[oid];
+        if (quotation["id"] === order["qid"]) {
+          order["quotation"] = quotation;
+          break; // a quotation only belongs to an order
+        }
+      }
+    }
+
+    const pps = pids.map(pid => rpc<Object>(domain, process.env["PLAN"], uid, "getPlan", pid, true)); // fetch plan in parallel way
+    const preps = await Promise.all(pps);
+    const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
     for (const oid of oids) {
       const order = orders[oid];
-      if (vehicle["id"] === order["vid"]) {
-        order["vehicle"] = vehicle; // a vehicle may belong to many orders
-      }
-    }
-  }
-
-  for (const qid of qids) {
-    const qrep = await rpc<Object>(domain, process.env["QUOTATION"], uid, "getQuotation", qid);
-    if (qrep["code"] === 200) {
-      quotations.push(qrep["data"]);
-    }
-  }
-
-  for (const quotation of quotations) {
-    for (const oid of oids) {
-      const order = orders[oid];
-      if (quotation["id"] === order["qid"]) {
-        order["quotation"] = quotation;
-        break; // a quotation only belongs to an order
-      }
-    }
-  }
-
-  const pps = pids.map(pid => rpc<Object>(domain, process.env["PLAN"], uid, "getPlan", pid, true)); // fetch plan in parallel way
-  const preps = await Promise.all(pps);
-  const plans = preps.filter(p => p["code"] === 200).map(p => p["data"]);
-  for (const oid of oids) {
-    const order = orders[oid];
-    for (const plan of plans) {
-      delete plan["rules"];
-      if (order["pids"].hasOwnProperty(plan["id"])) {
-        order["plans"].push(plan); // a plan may belong to many orders
-      }
-      for (const planitem of plan["items"]) {
-        delete planitem["description"];
-        for (const orderitem of order["items"]) {
-          if (planitem["id"] === orderitem["piid"]) {
-            orderitem["plan_item"] = planitem;
+      for (const plan of plans) {
+        delete plan["rules"];
+        if (order["pids"].hasOwnProperty(plan["id"])) {
+          order["plans"].push(plan); // a plan may belong to many orders
+        }
+        for (const planitem of plan["items"]) {
+          delete planitem["description"];
+          for (const orderitem of order["items"]) {
+            if (planitem["id"] === orderitem["piid"]) {
+              orderitem["plan_item"] = planitem;
+            }
           }
         }
       }
     }
-  }
 
-  const multi = bluebird.promisifyAll(cache.multi()) as Multi;
-  for (const oid of oids) {
-    const order = orders[oid];
-    delete order["pids"];
-    const order_no = order["no"];
-    const vid = order["vid"];
-    const qid = order["qid"];
-    const updated_at = order["updated_at"].getTime();
-    const newOrder = await msgpack_encode(order);
-    multi.zadd("new-orders-id", updated_at, oid);
-    multi.hset("vid-poid", vid, oid);
-    multi.zadd("plan-orders", updated_at, oid);
-    multi.zadd("orders", updated_at, oid);
-    multi.zadd("orders-" + order["vehicle"]["uid"], updated_at, oid);
-    multi.hset("orderNo-id", order_no, oid);
-    multi.hset("order-vid-" + vid, qid, oid);
-    multi.hset("orderid-vid", oid, vid);
-    multi.hset("order-entities", oid, newOrder);
-    multi.zadd("plan-orders", updated_at, oid);
-    multi.hset("VIN-orderID", order["vehicle"]["vin_code"], oid);
-  }
+    const multi = bluebird.promisifyAll(cache.multi()) as Multi;
+    for (const oid of oids) {
+      const order = orders[oid];
+      delete order["pids"];
+      const order_no = order["no"];
+      const vid = order["vid"];
+      const qid = order["qid"];
+      const updated_at = order["updated_at"].getTime();
+      const newOrder = await msgpack_encode(order);
+      multi.zadd("new-orders-id", updated_at, oid);
+      multi.hset("vid-poid", vid, oid);
+      multi.zadd("plan-orders", updated_at, oid);
+      multi.zadd("orders", updated_at, oid);
+      multi.zadd("orders-" + order["vehicle"]["uid"], updated_at, oid);
+      multi.hset("orderNo-id", order_no, oid);
+      multi.hset("order-vid-" + vid, qid, oid);
+      multi.hset("orderid-vid", oid, vid);
+      multi.hset("order-entities", oid, newOrder);
+      multi.zadd("plan-orders", updated_at, oid);
+      multi.hset("VIN-orderID", order["vehicle"]["vin_code"], oid);
+    }
 
-  return multi.execAsync();
+    return multi.execAsync();
+  } catch (e) {
+    log.info(e + "in async plan_orders");
+    throw e;
+  }
 }
 
 
