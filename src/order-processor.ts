@@ -114,8 +114,8 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
         pidstmp.push(pid);
       }
       orders[oid]["items"].sort((a, b) => {
-        const aid = a["id"];
-        const bid = b["id"];
+        const aid = a["piid"];
+        const bid = b["piid"];
         if (aid === "00000000-0000-0000-0000-000000000005") {
           return -1;
         } else if (bid === "00000000-0000-0000-0000-000000000005") {
