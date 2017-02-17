@@ -530,7 +530,7 @@ processor.callAsync("placeAnDriverOrder", async (ctx: ProcessorContext, domain: 
   }
 });
 
-async function updateAccount(domain: string, vid: string, pid: string, plan: string, openid: string, no: string, oid: string, uid: string, title: string, payment: number, cache: any): Promise<any> {
+async function updateAccount(domain: string, vid: string, pid: string, plan: string, openid: string, no: string, oid: string, uid: string, title: string, payment: number, summary: number, cache: any): Promise<any> {
   log.info("plan title" + plan);
   const balance = payment;
   let balance0: number = null;
@@ -577,7 +577,8 @@ async function updateAccount(domain: string, vid: string, pid: string, plan: str
   });
   req.write(postData);
   req.end();
-  return rpc(domain, process.env["WALLET"], uid, "updateAccountBalance", vid, pid, 1, 1, balance0, balance1, 0, title, oid, uid);
+  const balance2 = summary - payment
+  return rpc(domain, process.env["WALLET"], uid, "updateAccountBalance", vid, pid, 1, 1, balance0, balance1, balance2, title, oid, uid);
 }
 
 async function createAccount(domain: string, vid: string, pid: string, uid: string): Promise<any> {
@@ -647,7 +648,7 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
         const title = "加入计划充值";
         const plan = order["plans"].filter(p => p["show_in_index"]);
         log.info("plan" + JSON.stringify(plan));
-        await updateAccount(domain, order["vehicle"]["id"], plan ? plan[0]["id"] : null, plan ? plan[0]["title"] : "好车主/互助计划", String(openid), order["no"], order["id"], uid, title, order["summary"], cache);
+        await updateAccount(domain, order["vehicle"]["id"], plan ? plan[0]["id"] : null, plan ? plan[0]["title"] : "好车主/互助计划", String(openid), order["no"], order["id"], uid, title, parseFloat(order["payment"]), parseFloat(order["summary"]), cache);
       }
       await set_for_response(cache, cbflag, {
         code: 200,
