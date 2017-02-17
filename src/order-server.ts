@@ -130,6 +130,56 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
   }
 });
 
+server.callAsync("renameNo", allowAll, "更新订单编号", "更新订单编号", async (ctx: ServerContext, order_no: string) => {
+  log.info(`renameNo, uid: ${ctx.uid}, order_no: ${order_no}`);
+  if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  try {
+    const strNo = await ctx.cache.incr("order-no");
+    const new_no = order_no.substring(0, 14);
+    const strno = String(strNo);
+    const no: string = formatNum(strno, 7);
+    const new_order_no = new_no + no;
+    const args = { ctx: ctx, order_no: order_no, new_order_no: new_order_no };
+    const job = await msgpack_encode(args);
+    await disque.addjob("renameNo-order-disque", job, { timeout: 30000, retry: 5 });
+  } catch (e) {
+    log.info("renameNo catch ERROR" + e);
+    throw { code: 500, msg: e.message };
+  }
+});
+
+server.callAsync("refund", allowAll, "银行退款", "更改订单对应状态", async (ctx: ServerContext, order_id: string) => {
+  log.info(`refund, uid: ${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { ctx: ctx, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("refund-order-disque", job, { timeout: 30000, retry: 5 });
+});
+
+server.callAsync("agreeWithdraw", allowAll, "同意提现申请", "更改订单状态", async (ctx: ServerContext, order_id: string) => {
+  log.info(`agreeWithdraw, uid:${ctx.uid},order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { ctx: ctx, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("agreeWithdraw-order-disque", job, { timeout: 30000, retry: 5 });
+});
+
+
 
 server.call("getAllOrders", allowAll, "获取所有订单", "可以根据条件对搜索结果过滤", (ctx: ServerContext, rep: ((result: any) => void), offset: number, limit: number, max_score: number, score: number, order_id: string, owner: string, phone: string, license: string, begin_time: Date, end_time: Date, state: string) => {
   log.info(`getAllOrders, offset: ${offset}, limit: ${limit}, max_score: ${max_score}, score: ${score}, order_id: ${order_id}, owner: ${owner}, phone: ${phone}, license: ${license}, begin_time: ${begin_time}, end_time: ${end_time}, state: ${state}`);
@@ -274,6 +324,83 @@ server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据�
   }
 });
 
+// 通过vid获取司机单
+server.callAsync("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "通过vid获取司机单", async (ctx: ServerContext, vid: string) => {
+  log.info(`getDriverOrderByVehicle, uid: ${ctx.uid}, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  try {
+    const dorep = await ctx.cache.hgetAsync("order-driver-entities", vid);
+    if (dorep === null || dorep === "") {
+      return { code: 404, msg: "未找到对应驾驶人" };
+    } else {
+      const drivers = await msgpack_decode(dorep);
+      return { code: 200, data: drivers };
+    }
+  } catch (e) {
+    log.info("getDriverOrderByVehicle catch ERROR" + e);
+    throw { code: 500, msg: e.message };
+  }
+});
+
+server.callAsync("getOrderByQid", allowAll, "获取订单详情", "根据ｑｉｄ获取订单详情", async (ctx: ServerContext, qid: string) => {
+  log.info(`getOrderByQid, uid: ${ctx.uid}, qid: ${qid}`);
+  if (!verify([uuidVerifier("qid", qid)], (errors: string[]) => {
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const oid = await ctx.cache.hgetAsync("qid-oid", qid);
+  if (oid === null || oid === "") {
+    return { code: 404, msg: "未找到对应订单信息" };
+  } else {
+    const orep = await ctx.cache.hgetAsync("order-entities", String(oid));
+    if (orep === null || orep === "") {
+      return { code: 404, msg: "未找到对应订单信息" };
+    } else {
+      const order_entities = await msgpack_decode(orep);
+      return { code: 200, data: order_entities };
+    }
+  }
+});
+
+
+server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "获取车辆对应所有订单", async (ctx: ServerContext, vid: string) => {
+  log.info(`getOrdersByVid, uid: ${ctx.uid}, vid: ${vid}`);
+  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  try {
+    const oids = await ctx.cache.zrangeAsync(`orders-${vid}`, 0, -1);
+    if (oids === null || oids === "") {
+      return { code: 404, msg: "未找到对应订单信息" };
+    } else {
+      const multi = bluebird.promisifyAll(ctx.cache.multi()) as Multi;
+      for (const oid of oids) {
+        multi.hget("order-entities", String(oid));
+      }
+      const oreps = await multi.execAsync();
+      const orders = [];
+      for (const orep of oreps) {
+        const o = await msgpack_decode(orep);
+        if (o !== null) {
+          orders.push(o);
+        }
+      }
+      return { code: 200, data: orders };
+    }
+  } catch (e) {
+    log.info("getOrdersByVid catch ERROR" + e);
+    throw { code: 500, msg: e.message };
+  }
+});
+
+
 server.call("getOrderState", allowAll, "获取订单状态", "获得订单的状态", (ctx: ServerContext, rep: ((result: any) => void), vid: string, qid: string) => {
   log.info(`getOrderState, vid: ${vid}, qid: ${qid}`);
   if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
@@ -311,13 +438,10 @@ server.call("getOrderState", allowAll, "获取订单状态", "获得订单的状
   });
 });
 
-server.call("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "获得车辆的驾驶人信息", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
+server.callAsync("getDriverForVehicle", allowAll, "获得车辆的驾驶人信息", "获得车辆的驾驶人信息", async (ctx: ServerContext, vid: string) => {
   log.info(`getDriverForVehicle, vid: ${vid}`);
   if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
+    throw { code: 400, msg: errors.join("\n") }
   })) {
     return;
   }
@@ -406,124 +530,9 @@ server.call("updateOrderState", allowAll, "更新订单状态", "更新订单状
   })();
 });
 
-server.call("updateOrderNo", allowAll, "更新订单编号", "更新订单编号", (ctx: ServerContext, rep: ((result: any) => void), order_no: string) => {
-  log.info(`updateOrderNo, order_no: ${order_no}`);
-  if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
-  })) {
-    return;
-  }
-  ctx.cache.incr("order-no", (err, strNo) => {
-    if (err) {
-      log.error(err);
-      rep({ code: 500, msg: err.message });
-    } else if (strNo) {
-      const new_no = order_no.substring(0, 14);
-      const strno = String(strNo);
-      const no: string = formatNum(strno, 7);
-      const new_order_no = new_no + no;
-      const callback = uuid.v1();
-      const pkt: CmdPacket = { cmd: "updateOrderNo", args: [order_no, new_order_no, callback] };
-      ctx.publish(pkt);
-      wait_for_response(ctx.cache, callback, rep);
-    } else {
-      rep({ code: 404, msg: "Order no not found" });
-    }
-  });
-});
 
-// 通过vid获取已生效计划单
-server.call("getPlanOrderByVehicle", allowAll, "通过vid获取已生效计划单", "通过vid获取已生效计划单", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
-  log.info(`getPlanOrderByVehicle, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
-  })) {
-    return;
-  }
-  ctx.cache.hget("vid-poid", vid, function (err, result) {
-    if (err) {
-      log.error(err);
-      rep({ code: 500, msg: err.message });
-    } else if (result === null) {
-      log.info("No plan order for the vid");
-      rep({ code: 404, msg: "Order not found" });
-    } else {
-      ctx.cache.hget("order-entities", result, function (err1, result1) {
-        if (err1) {
-          log.error(err1);
-          rep({ code: 500, msg: err1.message });
-        } else if (result1) {
-          (async () => {
-            try {
-              let nowDate = (new Date()).getTime();
-              const order = await msgpack_decode(result1);
-              rep({ code: 200, data: order, nowDate: nowDate });
-            } catch (e) {
-              log.info(e);
-              rep({ code: 500, msg: e.message });
-            }
-          })();
-        } else {
-          rep({ code: 404, msg: "Order not found" });
-        }
-      });
-    }
-  });
-});
 
-// 通过vid获取司机单
-server.call("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "通过vid获取司机单", (ctx: ServerContext, rep: ((result: any) => void), vid: string) => {
-  log.info(`getDriverOrderByVehicle, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    rep({
-      code: 400,
-      msg: errors.join("\n")
-    });
-  })) {
-    return;
-  }
-  ctx.cache.hget("vid-doid", vid, function (err, result) {
-    if (err) {
-      log.error(err);
-      rep({ code: 500, msg: err.message });
-    } else if (result === null) {
-      log.info("No driver order for the vid");
-      rep({ code: 404, msg: "Order not found" });
-    } else {
-      let multi = ctx.cache.multi();
-      multi.hget("order-entities", result);
-      multi.exec((err1, replies1) => {
-        if (err1) {
-          log.error(err1);
-        } else if (replies1 === null || replies1.length === 0) {
-          rep({ code: 404, msg: "Orders not found" });
-        } else {
-          (async () => {
-            const orders = [];
-            try {
-              for (const pkt of replies1) {
-                if (pkt !== null) {
-                  const order = await msgpack_decode(pkt);
-                  orders.push(order);
-                }
-              }
-              rep({ code: 200, data: orders });
-            } catch (e) {
-              log.info(e);
-              rep({ code: 500, msg: e });
-            }
-          })();
-        }
-      });
-    }
-  });
-});
+
 
 server.call("placeAnSaleOrder", allowAll, "下第三方单", "下第三方单", (ctx: ServerContext, rep: ((result: any) => void), vid: string, pid: string, qid: string, items: any, summary: number, payment: number, opr_level: number) => {
   log.info("placeAnSaleOrder vid: %s, pid: %s, qid: %s, summary: %d, payment: %d, opr_level: %d", vid, pid, qid, summary, payment, opr_level);
