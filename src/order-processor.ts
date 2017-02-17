@@ -577,7 +577,7 @@ async function updateAccount(domain: string, vid: string, pid: string, plan: str
   });
   req.write(postData);
   req.end();
-  const balance2 = summary - payment
+  const balance2 = summary - payment;
   return rpc(domain, process.env["WALLET"], uid, "updateAccountBalance", vid, pid, 1, 1, balance0, balance1, balance2, title, oid, uid);
 }
 
