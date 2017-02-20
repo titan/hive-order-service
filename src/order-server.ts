@@ -69,9 +69,9 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
           return { code: 500, msg: "订单距失效时间超过三个月同一辆车不允许下重复下单" };
         }
       } else {
-        const args = { ctx: ctx, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary };
+        const args = { type: 1, order_type: 1, domain: ctx.domain, uid: ctx.uid, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary };
         const job = await msgpack_encode(args);
-        await disque.addjob("plan-order-disque", job, { timeout: 30000, retry: 5 });
+        await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
       }
     }
   } catch (e) {
@@ -98,9 +98,9 @@ server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户
     if (tlen > 3) {
       return { code: 500, msg: "添加司机不能超过三位" }
     } else {
-      const args = { ctx: ctx, vid: vid, dids: dids, payment: payment, summary: summary };
+      const args = { type: 1, order_type: 2, domain: ctx.domain, uid: ctx.uid, vid: vid, dids: dids, payment: payment, summary: summary };
       const job = await msgpack_encode(args);
-      await disque.addjob("drivers-order-disque", job, { timeout: 30000, retry: 5 });
+      await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
     }
   } catch (e) {
     log.info("createDriverOrder catch ERROR" + e);
@@ -121,9 +121,9 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
     const order_id = uuid.v1();
     const callback = order_id;
     const domain = ctx.domain;
-    const args = { ctx: ctx, vid: vid, pid: pid, qid: qid, items: items, summary: summary, payment: payment, opr_level: opr_level };
+    const args = { tyep: 1, order_type: 3, domain: ctx.domain, uid: ctx.uid, vid: vid, pid: pid, qid: qid, items: items, summary: summary, payment: payment, opr_level: opr_level };
     const job = await msgpack_encode(args);
-    await disque.addjob("sale-order-disque", job, { timeout: 30000, retry: 5 });
+    await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
   } catch (e) {
     log.info("createSaleOrder catch ERROR" + e.message);
     throw { code: 500, msg: e.message };
@@ -144,9 +144,9 @@ server.callAsync("renameNo", allowAll, "更新订单编号", "更新订单编号
     const strno = String(strNo);
     const no: string = formatNum(strno, 7);
     const new_order_no = new_no + no;
-    const args = { ctx: ctx, order_no: order_no, new_order_no: new_order_no };
+    const args = { type: 10, domain: ctx.domain, uid: ctx.uid, order_no: order_no, new_order_no: new_order_no };
     const job = await msgpack_encode(args);
-    await disque.addjob("renameNo-order-disque", job, { timeout: 30000, retry: 5 });
+    await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
   } catch (e) {
     log.info("renameNo catch ERROR" + e);
     throw { code: 500, msg: e.message };
@@ -161,9 +161,9 @@ server.callAsync("refund", allowAll, "银行退款", "更改订单对应状态",
   })) {
     return;
   }
-  const args = { ctx: ctx, order_id: order_id };
+  const args = { type: 9, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
   const job = await msgpack_encode(args);
-  await disque.addjob("refund-order-disque", job, { timeout: 30000, retry: 5 });
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
 });
 
 server.callAsync("agreeWithdraw", allowAll, "同意提现申请", "更改订单状态", async (ctx: ServerContext, order_id: string) => {
@@ -174,10 +174,93 @@ server.callAsync("agreeWithdraw", allowAll, "同意提现申请", "更改订单�
   })) {
     return;
   }
-  const args = { ctx: ctx, order_id: order_id };
+  const args = { type: 8, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
   const job = await msgpack_encode(args);
-  await disque.addjob("agreeWithdraw-order-disque", job, { timeout: 30000, retry: 5 });
+  await disque.addjob("oorder-events-disque", job, { timeout: 30000, retry: 5 });
 });
+
+server.callAsync("refuseWithdraw", allowAll, "拒绝提现申请", "拒绝后更改订单状态", async (ctx: ServerContext, order_id: string, reason: string) => {
+  log.info(`refuseWithdraw, uid: ${ctx.uid}, order_id: ${order_id}, reason: ${reason}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { type: 7, domain: ctx.domain, uid: ctx.uid, order_id: order_id, reason: reason };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
+server.callAsync("applyWithdraw", allowAll, "申请提现", "申请提现时更改订单状态", async (ctx: ServerContext, order_id: string) => {
+  log.info(`applyWithdraw, uid:${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { type: 6, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
+server.callAsync("expire", allowAll, "订单到期", "对到期订单处理", async (ctx: ServerContext, order_id: string) => {
+  log.info(`expire, uid:${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { type: 5, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
+server.callAsync("takeEffect", allowAll, "订单生效", "对生效订单进行处理", async (ctx: ServerContext, order_id: string) => {
+  log.info(`takeEffect, uid:${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { type: 4, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
+
+server.callAsync("underwrite", allowAll, "订单核保", "对核保状态下订单进行处理", async (ctx: ServerContext, order_id: string) => {
+  log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const args = { type: 3, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
+server.callAsync("pay", allowAll, "用户支付订单", "更改订单支付状态", async (ctx: ServerContext, uid: string, order_id: string, amount: number) => {
+  log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
+  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
+    log.info("arg not match" + errors);
+    throw { code: 400, msg: errors.join("\n") };
+  })) {
+    return;
+  }
+  const state_code = 2;
+  const state = "已支付";
+  const vid = await ctx.cache.hgetAsync("oid-vid", order_id);
+  const args = { tyep: 2, domain: ctx.domain, uid: ctx.uid, order_id: order_id, vid: vid, state_code: state_code, state: state };
+  const job = await msgpack_encode(args);
+  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+});
+
 
 
 
