@@ -10,7 +10,10 @@ import * as queryString from "querystring";
 import * as Disq from "hive-disque";
 
 export const processor = new Processor();
+<<<<<<< HEAD
 const disque = new Disq({ nodes: ["127.0.0.1", "127.0.0.1"] });
+=======
+>>>>>>> 5235134916b4ce0b9e7cd1da28bbc1c13e15eec9
 
 const wxhost = process.env["WX_ENV"] === "test" ? "dev.fengchaohuzhu.com" : "m.fengchaohuzhu.com";
 
@@ -344,16 +347,47 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
     const vidstmp = [];
     const qidstmp = [];
     const pidstmp = [];
-    const piidstmp = [];
     for (const oid of oids) {
       vidstmp.push(orders[oid]["vid"]);
       qidstmp.push(orders[oid]["qid"]);
       for (const pid of Object.keys(orders[oid]["pids"])) {
         pidstmp.push(pid);
       }
-      for (const item of orders[oid]["items"]) {
-        piidstmp.push(item["plan_item"]);
-      }
+      orders[oid]["items"].sort((a, b) => {
+        const aid = a["piid"];
+        const bid = b["piid"];
+        if (aid === "00000000-0000-0000-0000-000000000005") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000005") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000006") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000006") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000007") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000007") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000001") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000001") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000002") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000002") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000003") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000003") {
+          return 1;
+        } else if (aid === "00000000-0000-0000-0000-000000000004") {
+          return -1;
+        } else if (bid === "00000000-0000-0000-0000-000000000004") {
+          return 1;
+        } else {
+          return 0;
+        }
+      });
     }
     const vids = [... new Set(vidstmp)];
     const qids = [... new Set(qidstmp)];
@@ -379,7 +413,11 @@ async function sync_plan_orders(db: PGClient, cache: RedisClient, domain: string
           }
         }
         delete vehicle["drivers"];
-        vehicle["drivers"] = drivers;
+        const unique_drivers = drivers.reduce((acc, x) => {
+          acc[x["id"]] = x;
+          return acc;
+        }, {});
+        vehicle["drivers"] = Object.keys(unique_drivers).map(x => unique_drivers[x]);
         vehicles.push(vehicle);
       }
     }
@@ -866,6 +904,99 @@ processor.call("updateOrderState", (ctx: ProcessorContext, domain: string, uid: 
   })();
 });
 
+async function sync_sale_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<void> {
+  const result = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.vid AS o_vid, o.type AS o_type, o.state_code AS o_state_code, o.state AS o_state, o.summary AS o_summary, o.payment AS o_payment, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.created_at AS o_created_at, o.updated_at AS o_updated_at, e.qid AS e_qid, e.opr_level AS e_opr_level, oi.id AS oi_id, oi.price AS oi_price, oi.piid AS oi_piid  FROM sale_order_ext AS e INNER JOIN orders AS o ON o.id = e.oid INNER JOIN plans AS p ON e.pid = p.id INNER JOIN plan_items AS pi ON p.id = pi.pid INNER JOIN order_items AS oi ON oi.piid = pi.id AND oi.oid = o.id WHERE o.deleted = FALSE AND e.deleted = FALSE AND p.deleted = FALSE AND pi.deleted = FALSE AND oi.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
+  const orders = {};
+  for (const row of result.rows) {
+    if (orders.hasOwnProperty(row.o_id)) {
+      orders[row.o_id]["items"].push({
+        id: row.oi_id,
+        oid: row.o_id,
+        piid: row.oi_piid,
+        plan_item: null,
+        price: row.oi_price
+      });
+    } else {
+      const order = {
+        id: row.o_id,
+        no: trim(row.o_no),
+        type: row.o_type,
+        state_code: row.o_state_code,
+        state: trim(row.o_state),
+        summary: row.o_summary,
+        payment: row.o_payment,
+        start_at: row.o_start_at,
+        stop_at: row.o_stop_at,
+        vid: row.o_vid,
+        vehicle: null,
+        pid: row.e_pid,
+        opr_level: row.e_opr_level,
+        plan: null,
+        qid: row.e_qid,
+        quotation: null,
+        items: [{
+          id: row.oi_id,
+          oid: row.o_id,
+          piid: row.oi_piid,
+          plan_item: null,
+          price: row.oi_price
+        }],
+        created_at: row.o_created_at,
+        updated_at: row.o_updated_at
+      };
+      orders[row.o_id] = order;
+    }
+  }
+
+  const oids = Object.keys(orders);
+  const vidstmp = [];
+  const qidstmp = [];
+  const pidstmp = [];
+  for (const oid of oids) {
+    vidstmp.push(orders[oid]["vid"]);
+    qidstmp.push(orders[oid]["qid"]);
+    pidstmp.push(orders[oid]["pid"]);
+  }
+  const vids = [... new Set(vidstmp)];
+  const qids = [... new Set(qidstmp)];
+  const pids = [... new Set(pidstmp)];
+
+  const vehicles = [];
+
+  for (const vid of vids) {
+    const vrep = await rpc<Object>(domain, process.env["VEHICLE"], null, "getVehicle", vid);
+    if (vrep["code"] === 200) {
+      vehicles.push(vrep["data"]);
+    }
+  }
+
+  for (const vehicle of vehicles) {
+    for (const oid of oids) {
+      const order = orders[oid];
+      if (vehicle["id"] === order["vid"]) {
+        order["vehicle"] = vehicle; // a vehicle may belong to many orders
+      }
+    }
+  }
+
+  const quotations = [];
+
+  for (const qid of qids) {
+    const qrep = await rpc<Object>(domain, process.env["QUOTATION"], null, "getQuotation", qid);
+    if (qrep["code"] === 200) {
+      quotations.push(qrep["data"]);
+    }
+  }
+
+  for (const quotation of quotations) {
+    for (const oid of oids) {
+      const order = orders[oid];
+      if (quotation["id"] === order["qid"]) {
+        order["quotation"] = quotation;
+        break; // a quotation only belongs to an order
+      }
+    }
+  }
 
 
 processor.call("placeAnSaleOrder", (ctx: ProcessorContext, uid: string, domain: any, order_id: string, vid: string, pid: string, qid: string, items: Object[], summary: number, payment: number, opr_level: number, cbflag: string) => {
