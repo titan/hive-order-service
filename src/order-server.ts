@@ -12,7 +12,6 @@ const mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
 const adminOnly: Permission[] = [["mobile", false], ["admin", true]];
 
 export const server = new Server();
-const disque = new Disq({ nodes: ["127.0.0.1", "127.0.0.1"] });
 
 const log = bunyan.createLogger({
   name: "order-server",
@@ -42,18 +41,18 @@ function formatNum(Source: string, Length: number): string {
   return strTemp + Source;
 }
 
-server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订单时创建", async (ctx: ServerContext, vid: string, plans: Object, qid: string, pm_price: number, service_ratio: number, summary: number, payment: number, v_value: number) => {
+server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订单时创建", async (ctx: ServerContext, vid: string, plans: Object, qid: string, pm_price: number, service_ratio: number, summary: number, payment: number, v_value: number, recommend: string, ticket: string) => {
   log.info(`createPlanOrder, uid: ${ctx.uid}, vid: ${vid},plans: ${JSON.stringify(plans)}, qid: ${qid},pm_price: ${pm_price}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}`);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
   try {
     const oid_buffer = await ctx.cache.hgetAsync("vid-poid", vid);
     const oid = String(oid_buffer);
     if (oid === null || oid === "") {
-      const args = { vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary };
+      const args = { type: 1, order_type: 1, domain: ctx.domain, uid: ctx.uid, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary, v_value: v_value, recommend: recommend, ticket: ticket };
       const job = await msgpack_encode(args);
       await disque.addjob("plan-order-disque", job, { timeout: 30000, retry: 5 });
     } else {
@@ -69,9 +68,9 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
           return { code: 500, msg: "订单距失效时间超过三个月同一辆车不允许下重复下单" };
         }
       } else {
-        const args = { type: 1, order_type: 1, domain: ctx.domain, uid: ctx.uid, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary };
-        const job = await msgpack_encode(args);
-        await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+        const args = { type: 1, order_type: 1, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary, v_value: v_value, recommend: recommend, ticket: ticket };
+        ctx.push("order-events-disque", args);
+        return waitingAsync(ctx);
       }
     }
   } catch (e) {
@@ -83,10 +82,10 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
 
 server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户下司机订单", async (ctx: ServerContext, vid: string, dids: any, summary: number, payment: number) => {
   log.info(`createDriverOrder, uid:${ctx.uid}, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}`);
-  if (!verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
   try {
     const uid = ctx.uid;
@@ -98,9 +97,9 @@ server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户
     if (tlen > 3) {
       return { code: 500, msg: "添加司机不能超过三位" }
     } else {
-      const args = { type: 1, order_type: 2, domain: ctx.domain, uid: ctx.uid, vid: vid, dids: dids, payment: payment, summary: summary };
-      const job = await msgpack_encode(args);
-      await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+      const args = { type: 1, order_type: 2, vid: vid, dids: dids, payment: payment, summary: summary };
+      ctx.push("order-events-disque", args);
+      return waitingAsync(ctx);
     }
   } catch (e) {
     log.info("createDriverOrder catch ERROR" + e);
@@ -121,9 +120,9 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
     const order_id = uuid.v1();
     const callback = order_id;
     const domain = ctx.domain;
-    const args = { tyep: 1, order_type: 3, domain: ctx.domain, uid: ctx.uid, vid: vid, pid: pid, qid: qid, items: items, summary: summary, payment: payment, opr_level: opr_level };
-    const job = await msgpack_encode(args);
-    await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+    const args = { type: 1, order_type: 3, domain: ctx.domain, uid: ctx.uid, vid: vid, pid: pid, qid: qid, items: items, summary: summary, payment: payment, opr_level: opr_level };
+    ctx.push("order-events-disque", args);
+    return waitingAsync(ctx);
   } catch (e) {
     log.info("createSaleOrder catch ERROR" + e.message);
     throw { code: 500, msg: e.message };
@@ -132,136 +131,138 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
 
 server.callAsync("renameNo", allowAll, "更新订单编号", "更新订单编号", async (ctx: ServerContext, order_no: string) => {
   log.info(`renameNo, uid: ${ctx.uid}, order_no: ${order_no}`);
-  if (!verify([stringVerifier("order_no", order_no)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
-  }
   try {
-    const strNo = await ctx.cache.incr("order-no");
-    const new_no = order_no.substring(0, 14);
-    const strno = String(strNo);
-    const no: string = formatNum(strno, 7);
-    const new_order_no = new_no + no;
-    const args = { type: 10, domain: ctx.domain, uid: ctx.uid, order_no: order_no, new_order_no: new_order_no };
-    const job = await msgpack_encode(args);
-    await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+    verify([stringVerifier("order_no", order_no)]);
   } catch (e) {
-    log.info("renameNo catch ERROR" + e);
-    throw { code: 500, msg: e.message };
+    return { code: 400, msg: e.message };
   }
+  const args = { order_no: order_no };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("refund", allowAll, "银行退款", "更改订单对应状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`refund, uid: ${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 9, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 9, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("agreeWithdraw", allowAll, "同意提现申请", "更改订单状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`agreeWithdraw, uid:${ctx.uid},order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 8, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("oorder-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 8, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("refuseWithdraw", allowAll, "拒绝提现申请", "拒绝后更改订单状态", async (ctx: ServerContext, order_id: string, reason: string) => {
   log.info(`refuseWithdraw, uid: ${ctx.uid}, order_id: ${order_id}, reason: ${reason}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 7, domain: ctx.domain, uid: ctx.uid, order_id: order_id, reason: reason };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 7, order_id: order_id, reason: reason };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("applyWithdraw", allowAll, "申请提现", "申请提现时更改订单状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`applyWithdraw, uid:${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 6, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 6, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("expire", allowAll, "订单到期", "对到期订单处理", async (ctx: ServerContext, order_id: string) => {
   log.info(`expire, uid:${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 5, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 5, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("takeEffect", allowAll, "订单生效", "对生效订单进行处理", async (ctx: ServerContext, order_id: string) => {
   log.info(`takeEffect, uid:${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 4, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 4, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 
 server.callAsync("underwrite", allowAll, "订单核保", "对核保状态下订单进行处理", async (ctx: ServerContext, order_id: string) => {
   log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
-  const args = { type: 3, domain: ctx.domain, uid: ctx.uid, order_id: order_id };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  const args = { type: 3, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
 });
 
 server.callAsync("pay", allowAll, "用户支付订单", "更改订单支付状态", async (ctx: ServerContext, uid: string, order_id: string, amount: number) => {
   log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
-  if (!verify([stringVerifier("order_id", order_id)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
-  const state_code = 2;
-  const state = "已支付";
+  const state = 2;
+  const state_description = "已支付";
   const vid = await ctx.cache.hgetAsync("oid-vid", order_id);
-  const args = { tyep: 2, domain: ctx.domain, uid: ctx.uid, order_id: order_id, vid: vid, state_code: state_code, state: state };
-  const job = await msgpack_encode(args);
-  await disque.addjob("order-events-disque", job, { timeout: 30000, retry: 5 });
+  if (vid === null || vid === "") {
+    return { code: 404, msg: "未找到该订单对应车辆" };
+  } else {
+    const args = { type: 2, order_id: order_id, vid: String(vid), state: state, state_description: state_description, amount: amount };
+    ctx.push("order-events-disque", args);
+    return waitingAsync(ctx);
+  }
 });
 
 
+server.callAsync("cancel", adminOnly, "取消订单", "删除订单数据", async (ctx: ServerContext, order_id: string) => {
+  log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
+  try {
+    verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
+  }
+  const args = { type: 0, order_id: order_id };
+  ctx.push("order-events-disque", args);
+  return waitingAsync(ctx);
+});
 
 
 server.call("getAllOrders", allowAll, "获取所有订单", "可以根据条件对搜索结果过滤", (ctx: ServerContext, rep: ((result: any) => void), offset: number, limit: number, max_score: number, score: number, order_id: string, owner: string, phone: string, license: string, begin_time: Date, end_time: Date, state: string) => {
