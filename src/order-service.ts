@@ -1,6 +1,5 @@
 import { Service, Server, BusinessEventListener, Processor, Config } from "hive-service";
 import { server } from "./order-server";
-import { processor } from "./order-processor";
 import { listener } from "./order-listener";
 import { run as trigger_run } from "./order-trigger";
 
@@ -19,7 +18,6 @@ const config: Config = {
 
 const svc: Service = new Service(config);
 svc.registerServer(server);
-svc.registerProcessor(processor);
 svc.registerEventListener(listener);
 svc.run();
 trigger_run();
