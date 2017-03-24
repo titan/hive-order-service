@@ -1,3 +1,5 @@
+
+import { BusinessEventContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, set_for_response, waiting, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
 import * as bluebird from "bluebird";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
@@ -33,7 +35,7 @@ const log = bunyan.createLogger({
   ]
 });
 
-export function run () {
+export function run() {
 
   const cache: RedisClient = bluebird.promisifyAll(createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"])) as RedisClient;
 
@@ -41,32 +43,21 @@ export function run () {
   vehicle_socket.connect(process.env["VEHICLE-TRIGGER"]);
   vehicle_socket.on("data", function (buf) {
     const obj = msgpack.decode(buf);
+    log.info("obj" + JSON.stringify(obj));
     const vid = obj["vid"];
     const vehicle = obj["vehicle"];
     log.info(`Got vehicle ${vid} from trigger`);
     (async () => {
       try {
         const poid: string = await cache.hgetAsync("vid-poid", vid);
-        const soid: string = await cache.hgetAsync("vid-soid", vid);
-        const oids: string[] = [];
-        if (poid) {
-          oids.push(poid);
-        }
-        if (soid) {
-          oids.push(soid);
-        }
-        if (oids.length > 0) {
-          const multi = cache.multi();
-          for (const oid of oids) {
-            log.info(`update order ${oid} with vehicle ${vid}`);
-            const orderstr: string = await cache.hgetAsync("order-entities", oid);
-            const order = JSON.parse(orderstr);
-            order["vehicle"] = vehicle;
-            multi.hset("order-entities", oid, JSON.stringify(order));
-          }
-          await multi.execAsync();
-          log.info(`update vehicle ${vid} of orders done`);
-        }
+        const oid = poid.toString();
+        log.info(`update order ${oid} with vehicle ${vid}`);
+        const orderstr: string = await cache.hgetAsync("order-entities", oid);
+        const order = await msgpack_decode(orderstr);
+        order["vehicle"] = vehicle;
+        const new_order = await msgpack_encode(order)
+        await cache.hsetAsync("order-entities", oid, new_order);
+        log.info(`update vehicle ${vid} of orders done`);
       } catch (e) {
         log.error(e);
       }

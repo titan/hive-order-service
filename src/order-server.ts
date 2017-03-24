@@ -1,9 +1,9 @@
-import { Server, ServerContext, rpc, AsyncServerFunction, CmdPacket, Permission, waitingAsync, msgpack_decode, msgpack_encode } from "hive-service";
+import { Server, ServerContext, rpcAsync, AsyncServerFunction, CmdPacket, Permission, waitingAsync, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
 import { RedisClient, Multi } from "redis";
 import * as bunyan from "bunyan";
-import * as uuid from "node-uuid";
+import * as uuid from "uuid";
 import * as http from "http";
-import { verify, uuidVerifier, stringVerifier, numberVerifier } from "hive-verify";
+import { verify, uuidVerifier, stringVerifier, numberVerifier, dateVerifier, arrayVerifier } from "hive-verify";
 import * as Disq from "hive-disque";
 import * as bluebird from "bluebird";
 
@@ -32,7 +32,6 @@ const log = bunyan.createLogger({
     }
   ]
 });
-
 function formatNum(Source: string, Length: number): string {
   let strTemp = "";
   for (let i = 1; i <= Length - Source.length; i++) {
@@ -41,26 +40,115 @@ function formatNum(Source: string, Length: number): string {
   return strTemp + Source;
 }
 
-server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订单时创建", async (ctx: ServerContext, vid: string, plans: Object, qid: string, pm_price: number, service_ratio: number, summary: number, payment: number, v_value: number, recommend: string, ticket: string) => {
-  log.info(`createPlanOrder, uid: ${ctx.uid}, vid: ${vid},plans: ${JSON.stringify(plans)}, qid: ${qid},pm_price: ${pm_price}, service_ratio: ${service_ratio}, summary: ${summary}, payment: ${payment}`);
+async function checkOrderEffectTime(orders): Promise<any> {
   try {
-    verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), numberVerifier("service_ratio", service_ratio), numberVerifier("summary", summary), numberVerifier("payment", payment), numberVerifier("v_value", v_value)]);
+    for (const order of orders) {
+      if (order["state"] === 4) {
+        const now_time = new Date().getTime();
+        const stop_time = new Date(order["stop_at"]).getTime();
+        const time = stop_time - now_time;
+        if (time < 30 * 24 * 60 * 60 * 1000) {
+          return { code: 200, data: true };
+        }
+      }
+    }
+    return { code: 500, msg: false };
+  } catch (e) {
+    log.info(e);
+    throw e;
+  }
+}
+
+async function checkOrderLimit(domain: string, uid: string, owner: string, insured: string, cache: RedisClient): Promise<any> {
+  try {
+    const oids = await cache.zrangeAsync(`orders-${uid}`, 0, -1);
+    log.info("oid" + oids);
+    if (oids !== null && oids.length !== 0) {
+      const multi = bluebird.promisifyAll(cache.multi()) as Multi;
+      for (const oid of oids) {
+        multi.hget("order-entities", String(oid));
+      }
+      const result: Object[] = [];
+      const oreps = await multi.execAsync();
+      for (const pkt of oreps) {
+        if (pkt !== null) {
+          const order = await msgpack_decode(pkt);
+          result.push(order);
+        }
+      }
+      const orders = result.filter(o => o["type"] === 1);
+      const sameOrderInsured = orders.filter(order => order["insured"]["identity_no"] === order["owner"]["identity_no"]);
+      log.info("sameOrderInsured" + sameOrderInsured.length);
+      const diffOrderInsured = orders.filter(order => order["insured"]["identity_no"] !== order["owner"]["identity_no"]);
+      log.info("diffOrderInsured" + diffOrderInsured.length);
+      if (insured === owner) {
+        if (sameOrderInsured.length < 3) {
+          return { code: 200, data: "ok" };
+        } else {
+          const orderEffect = await checkOrderEffectTime(sameOrderInsured);
+          log.info("orderEffect" + JSON.stringify(orderEffect));
+          if (orderEffect === 200) {
+            return { code: 200, data: "ok" };
+          } else {
+            const notPay = sameOrderInsured.filter(order => order["state"] === 1);
+            if (notPay.length !== 0) {
+              return { code: 501, msg: "您有尚未完成的订单,请处理后再获取报价" };
+            } else {
+              return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
+            }
+          }
+        }
+      } else {
+        if (diffOrderInsured.length < 2) {
+          return { code: 200, data: "ok" };
+        } else {
+          const orderEffect = await checkOrderEffectTime(sameOrderInsured);
+          if (orderEffect === 200) {
+            return { code: 200, data: "ok" };
+          } else {
+            const notPay = sameOrderInsured.filter(order => order["state"] === 1);
+            if (notPay.length !== 0) {
+              return { code: 501, msg: "您有尚未完成的订单,请处理后再获取报价" };
+            } else {
+              return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
+            }
+          }
+        }
+      }
+    } else {
+      return { code: 200, data: "ok" };
+    }
+  } catch (e) {
+    log.info(e);
+    throw e;
+  }
+}
+
+
+server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订单时创建", async (ctx: ServerContext, qid: string, vid: string, owner, insured, plans: Object, expect_at: Date) => {
+  log.info(`createPlanOrder, uid: ${ctx.uid}, vid: ${vid},plans: ${JSON.stringify(plans)}, qid: ${qid}, expect_at :${expect_at}},owner: ${owner},insured: ${insured}`);
+  try {
+    await verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid), dateVerifier("expect_at", expect_at)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
   try {
-    const oid_buffer = await ctx.cache.hgetAsync("vid-poid", vid);
-    const oid = String(oid_buffer);
+    const oid = await ctx.cache.hgetAsync("vid-poid", vid);
     if (oid === null || oid === "") {
-      const args = { type: 1, order_type: 1, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary, v_value: v_value, recommend: recommend, ticket: ticket };
-      ctx.push("order-events-disque", args);
-      return waitingAsync(ctx);
+      const result = await checkOrderLimit(ctx.domain, ctx.uid, owner, insured, ctx.cache);
+      if (result["code"] === 200) {
+        const args = { type: 1, order_type: 1, vid: vid, owner: owner, insured: insured, plans: plans, qid: qid, expect_at: expect_at };
+        ctx.push("order-events-disque", args);
+        return await waitingAsync(ctx);
+      } else {
+        return { code: result["code"], msg: result["msg"] };
+      }
     } else {
       const orderJson = await ctx.cache.hgetAsync("order-entities", oid);
       const order_entities = await msgpack_decode(orderJson);
-      if (order_entities["state_code"] === 1 || order_entities["state_code"] === 2 || order_entities["state_code"] === 3) {
-        return { code: 500, msg: "同一个车不能重复下单" };
-      } else if (order_entities["state_code"] === 4) {
+      if (order_entities["state"] === 2 || order_entities["state"] === 3) {
+        return { code: 501, msg: "该车有计划生效订单，若要重新提交订单，请取消该订单" };
+      } else if (order_entities["state"] === 4) {
         const now_time = new Date().getTime();
         const stop_time = new Date(order_entities["stop_at"]).getTime();
         const time = stop_time - now_time;
@@ -68,14 +156,14 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
           return { code: 500, msg: "订单距失效时间超过三个月同一辆车不允许下重复下单" };
         }
       } else {
-        const args = { type: 1, order_type: 1, vid: vid, plans: plans, qid: qid, pm_price: pm_price, service_ratio: service_ratio, payment: payment, summary: summary, v_value: v_value, recommend: recommend, ticket: ticket };
+        const args = { type: 1, order_type: 1, vid: vid, owner: owner, insured: insured, plans: plans, qid: qid, expect_at: expect_at };
         ctx.push("order-events-disque", args);
-        return waitingAsync(ctx);
+        return await waitingAsync(ctx);
       }
     }
   } catch (e) {
     log.info("createPlanOrder catch ERROR" + e);
-    throw { code: 500, msg: e.message };
+    throw { code: 500, msg: e };
   }
 });
 
@@ -83,7 +171,7 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
 server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户下司机订单", async (ctx: ServerContext, vid: string, dids: any, summary: number, payment: number) => {
   log.info(`createDriverOrder, uid:${ctx.uid}, vid: ${vid}, dids: ${JSON.stringify(dids)}, summary: ${summary}, payment: ${payment}`);
   try {
-    verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)]);
+    await verify([uuidVerifier("vid", vid), numberVerifier("summary", summary), numberVerifier("payment", payment)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
@@ -104,7 +192,7 @@ server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户
     } else {
       const args = { type: 1, order_type: 2, vid: vid, dids: dids, payment: payment, summary: summary };
       ctx.push("order-events-disque", args);
-      return waitingAsync(ctx);
+      return await waitingAsync(ctx);
     }
   } catch (e) {
     log.info("createDriverOrder catch ERROR" + e);
@@ -114,11 +202,10 @@ server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户
 
 server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方单", async (ctx: ServerContext, vid: string, pid: string, qid: string, items: any, summary: number, payment: number, opr_level: number) => {
   log.info(`createSaleOrder, uid: ${ctx.uid}, vid:${vid}, pid: ${pid}, qid: ${qid},items: ${JSON.stringify(items)}, summary: ${summary}, payment: ${payment}, opr_level: ${opr_level}`);
-  if (!verify([uuidVerifier("vid", vid), uuidVerifier("qid", qid)], (errors: string[]) => {
-    log.info("arg not match" + errors);
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    await verify([stringVerifier("vid", qid), stringVerifier("qid", qid)]);
+  } catch (e) {
+    return { code: 400, msg: e.message };
   }
   try {
     const uid = ctx.uid;
@@ -127,7 +214,7 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
     const domain = ctx.domain;
     const args = { type: 1, order_type: 3, domain: ctx.domain, uid: ctx.uid, vid: vid, pid: pid, qid: qid, items: items, summary: summary, payment: payment, opr_level: opr_level };
     ctx.push("order-events-disque", args);
-    return waitingAsync(ctx);
+    return await waitingAsync(ctx);
   } catch (e) {
     log.info("createSaleOrder catch ERROR" + e.message);
     throw { code: 500, msg: e.message };
@@ -137,139 +224,220 @@ server.callAsync("createSaleOrder", allowAll, "下第三方单", "下第三方�
 server.callAsync("renameNo", allowAll, "更新订单编号", "更新订单编号", async (ctx: ServerContext, order_no: string) => {
   log.info(`renameNo, uid: ${ctx.uid}, order_no: ${order_no}`);
   try {
-    verify([stringVerifier("order_no", order_no)]);
+    await verify([stringVerifier("order_no", order_no)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
-  const args = { order_no: order_no };
+  const args = { type: 10, order_no: order_no };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("refund", allowAll, "银行退款", "更改订单对应状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`refund, uid: ${ctx.uid}, order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
   const args = { type: 9, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("agreeWithdraw", allowAll, "同意提现申请", "更改订单状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`agreeWithdraw, uid:${ctx.uid},order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
   const args = { type: 8, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("refuseWithdraw", allowAll, "拒绝提现申请", "拒绝后更改订单状态", async (ctx: ServerContext, order_id: string, reason: string) => {
   log.info(`refuseWithdraw, uid: ${ctx.uid}, order_id: ${order_id}, reason: ${reason}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     return { code: 400, msg: e.message };
   }
   const args = { type: 7, order_id: order_id, reason: reason };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("applyWithdraw", allowAll, "申请提现", "申请提现时更改订单状态", async (ctx: ServerContext, order_id: string) => {
   log.info(`applyWithdraw, uid:${ctx.uid}, order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
   const args = { type: 6, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("expire", allowAll, "订单到期", "对到期订单处理", async (ctx: ServerContext, order_id: string) => {
   log.info(`expire, uid:${ctx.uid}, order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
   const args = { type: 5, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("takeEffect", allowAll, "订单生效", "对生效订单进行处理", async (ctx: ServerContext, order_id: string) => {
   log.info(`takeEffect, uid:${ctx.uid}, order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
   const args = { type: 4, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 
 server.callAsync("underwrite", allowAll, "订单核保", "对核保状态下订单进行处理", async (ctx: ServerContext, order_id: string, start_at: Date, stop_at: Date) => {
   log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id},start_at: ${start_at}, stop_at: ${stop_at}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
   const args = { type: 3, order_id: order_id, start_at, stop_at };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
 });
 
 server.callAsync("pay", allowAll, "用户支付订单", "更改订单支付状态", async (ctx: ServerContext, uid: string, order_id: string, amount: number) => {
-  log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
+  log.info(`pay, uid:${ctx.uid}, order_id: ${order_id}, amount: ${amount}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
-  const args = { type: 2, order_id: order_id, amount: amount };
-  ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  if (ctx.domain === "admin") {
+    const args = { type: 2, uid: uid, order_id: order_id, amount: amount };
+    ctx.push("order-events-disque", args);
+    return await waitingAsync(ctx);
+  } else {
+    if (uid !== ctx.uid) {
+      return { code: 500, msg: "仅限本人操作" };
+    } else {
+      const args = { type: 2, uid: ctx.uid, order_id: order_id, amount: amount };
+      ctx.push("order-events-disque", args);
+      return await waitingAsync(ctx);
+    }
+  }
 });
 
 
 server.callAsync("cancel", adminOnly, "取消订单", "删除订单数据", async (ctx: ServerContext, order_id: string) => {
-  log.info(`underwrite, uid:${ctx.uid}, order_id: ${order_id}`);
+  log.info(`cancel, uid:${ctx.uid}, order_id: ${order_id}`);
   try {
-    verify([stringVerifier("order_id", order_id)]);
+    await verify([stringVerifier("order_id", order_id)]);
   } catch (e) {
     log.info(e);
     return { code: 400, msg: e.message };
   }
   const args = { type: 0, order_id: order_id };
   ctx.push("order-events-disque", args);
-  return waitingAsync(ctx);
+  return await waitingAsync(ctx);
+});
+
+server.callAsync("addDrivers", allowAll, "添加司机", "添加司机", async (ctx: ServerContext, order_id: string, dids: Object[]) => {
+  log.info(`addDrivers, uid: ${ctx.uid}, order_id: ${order_id}, dids: ${dids}`);
+  try {
+    await verify([stringVerifier("order_id", order_id), arrayVerifier("dids", dids)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
+  }
+  try {
+    const args = { type: 11, order_id: order_id, dids: dids };
+    ctx.push("order-events-disque", args);
+    return await waitingAsync(ctx);
+  } catch (e) {
+    log.info(e);
+    throw e;
+  }
 });
 
 
+server.callAsync("delDrivers", allowAll, "删除司机", "删除司机", async (ctx: ServerContext, order_id: string, dids: Object[]) => {
+  log.info(`delDrivers, uid: ${ctx.uid}, order_id: ${order_id}, dids: ${dids}`);
+  try {
+    await verify([stringVerifier("order_id", order_id), arrayVerifier("dids", dids)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
+  }
+  try {
+    const args = { type: 12, order_id: order_id, dids: dids };
+    ctx.push("order-events-disque", args);
+    return await waitingAsync(ctx);
+  } catch (e) {
+    log.info(e);
+    throw e;
+  }
+});
 
-server.callAsync("getOrder", allowAll, "获取订单详情", "获得订单详情", async (ctx: ServerContext, oid: string) => {
+
+server.callAsync("updateDrivingView", allowAll, "修改行驶证信息", "修改行驶证信息", async (ctx: ServerContext, order_id: string, driving_frontal_view: string, driving_rear_view: string, pid: string, identity_frontal_view: string, identity_rear_view: string, driver_views: Object) => {
+  log.info(`updateDrivingView, uid: ${ctx.uid}, order_id: ${order_id}, pid: ${pid}, driving_frontal_view: ${driving_frontal_view}, driving_rear_view: ${driving_rear_view}, identity_frontal_view: ${identity_frontal_view}, identity_rear_view: ${identity_rear_view}, driver_views: ${JSON.stringify(driver_views)}`);
+  try {
+    await verify([stringVerifier("order_id", order_id)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
+  }
+  try {
+    const args = { type: 13, order_id: order_id, driving_frontal_view, driving_rear_view };
+    const images = [];
+    const owner = { pid: pid, identity_frontal_view: identity_frontal_view, identity_rear_view: identity_rear_view, license_frontal_view: "" };
+    for (const p in driver_views) {
+      if (String(pid) === String(p)) {
+        owner["license_frontal_view"] = driver_views[p];
+      } else {
+        const driver_view = { pid: p, identity_frontal_view: "", identity_rear_view: "", license_frontal_view: driver_views[p] };
+        images.push(driver_view);
+      }
+    }
+    images.push(owner);
+    const prep = await rpcAsync<Object>(ctx.domain, process.env["PERSON"], ctx.uid, "updateViews", images);
+    if (prep["code"] === 200) {
+      ctx.push("order-events-disque", args);
+      return await waitingAsync(ctx);
+    } else {
+      return { code: prep["code"], msg: prep["msg"] };
+    }
+  } catch (e) {
+    log.info(e);
+    throw e;
+  }
+});
+
+server.callAsync("getPlanOrder", allowAll, "获取订单详情", "获得订单详情", async (ctx: ServerContext, oid: string) => {
   log.info(`getOrder, uid: ${ctx.uid}, oid: ${oid}`);
-  if (!verify([uuidVerifier("oid", oid)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    await verify([stringVerifier("oid", oid)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
   try {
     const orep = await ctx.cache.hgetAsync("order-entities", oid);
@@ -277,8 +445,19 @@ server.callAsync("getOrder", allowAll, "获取订单详情", "获得订单详情
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
       const order_entities = await msgpack_decode(orep);
-      const nowDate = (new Date()).getTime();
-      return { code: 200, data: order_entities, nowDate: nowDate };
+      const nowDate = new Date();
+      const uid = order_entities["uid"];
+      if (ctx.domain === "admin") {
+        log.info("admin");
+        return { code: 200, data: order_entities, now: nowDate };
+      } else {
+        if (uid === ctx.uid) {
+          log.info("mobile");
+          return { code: 200, data: order_entities, now: nowDate };
+        } else {
+          return { code: 501, msg: "用户信息获取错误，请联系客服协助处理，客服电话：4006869809" };
+        }
+      }
     }
   } catch (e) {
     log.info("getOrder catch ERROR" + e);
@@ -287,22 +466,23 @@ server.callAsync("getOrder", allowAll, "获取订单详情", "获得订单详情
 });
 
 
-server.callAsync("getOrders", allowAll, "获取订单列表", "获得一个用户的所有订单", async (ctx: ServerContext, offset: number, limit: number) => {
-  log.info(`getOrders, uid: ctx:${ctx.uid}, offset: ${offset}, limit: ${limit}`);
-  if (!verify([numberVerifier("offset", offset), numberVerifier("limit", limit)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
-  }
+server.callAsync("getPlanOrdersByUser", allowAll, "获取订单列表", "获得一个用户的所有订单", async (ctx: ServerContext, uid?: string) => {
+  log.info(`getPlanOrdersByUser, uid${uid ? uid : ctx.uid}`);
   try {
-    const oids = await ctx.cache.zrangeAsync(`orders-${ctx.uid}`, offset, limit);
+    let u = null;
+    if (ctx.domain === "admin") {
+      u = uid ? uid : ctx.uid;
+    } else {
+      u = ctx.uid;
+    }
+    const oids = await ctx.cache.zrangeAsync(`orders-${u}`, 0, -1);
     if (oids !== null && oids.length !== 0) {
       const multi = bluebird.promisifyAll(ctx.cache.multi()) as Multi;
       for (const oid of oids) {
-        multi.hget("order_entities", String(oid));
+        multi.hget("order-entities", String(oid));
       }
       const orders: Object[] = [];
-      const nowDate = (new Date()).getTime();
+      const nowDate = new Date();
       const oreps = await multi.execAsync();
       for (const pkt of oreps) {
         if (pkt !== null) {
@@ -310,7 +490,12 @@ server.callAsync("getOrders", allowAll, "获取订单列表", "获得一个用�
           orders.push(order);
         }
       }
-      return { code: 200, data: orders, nowDate: nowDate };
+      const result = orders.filter(o => o["type"] === 1);
+      if (result.length === 0) {
+        return { code: 404, msg: "未找到对应订单信息" };
+      } else {
+        return { code: 200, data: result, now: nowDate };
+      }
     } else {
       return { code: 404, msg: "未找到对应订单信息" };
     }
@@ -320,21 +505,32 @@ server.callAsync("getOrders", allowAll, "获取订单列表", "获得一个用�
   }
 });
 
-server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据ｖｉｄ获取计划订单", async (ctx: ServerContext, vid) => {
+server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据ｖｉｄ获取计划订单", async (ctx: ServerContext, vid: string) => {
   log.info(`getPlanOrderByVehicle, uid: ${ctx.uid}, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    await verify([stringVerifier("vid", vid)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
   try {
     const poid = await ctx.cache.hgetAsync("vid-poid", vid);
+    const now = new Date();
     if (poid === null || poid === "") {
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
-      const orep = await ctx.cache.hgetAsync("order-entities", poid);
+      const orep = await ctx.cache.hgetAsync("order-entities", String(poid));
       const order_entities = await msgpack_decode(orep);
-      return { code: 200, data: order_entities };
+      const uid = order_entities["uid"];
+      if (ctx.domain === "admin") {
+        return { code: 200, data: order_entities, now: now };
+      } else {
+        if (uid === ctx.uid) {
+          return { code: 200, data: order_entities, now: now };
+        } else {
+          return { code: 501, msg: "用户信息获取错误，请联系客服协助处理，客服电话：4006869809" };
+        }
+      }
     }
   } catch (e) {
     log.info("getPlanOrderByVehicle catch ERROR" + e);
@@ -345,10 +541,11 @@ server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据�
 // 通过vid获取司机单
 server.callAsync("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "通过vid获取司机单", async (ctx: ServerContext, vid: string) => {
   log.info(`getDriverOrderByVehicle, uid: ${ctx.uid}, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    await verify([stringVerifier("vid", vid)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
   try {
     const dorep = await ctx.cache.hgetAsync("order-driver-entities", vid);
@@ -364,14 +561,16 @@ server.callAsync("getDriverOrderByVehicle", allowAll, "通过vid获取司机单"
   }
 });
 
-server.callAsync("getOrderByQid", allowAll, "获取订单详情", "根据ｑｉｄ获取订单详情", async (ctx: ServerContext, qid: string) => {
-  log.info(`getOrderByQid, uid: ${ctx.uid}, qid: ${qid}`);
-  if (!verify([uuidVerifier("qid", qid)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+server.callAsync("getPlanOrderByQid", allowAll, "获取订单详情", "根据ｑｉｄ获取订单详情", async (ctx: ServerContext, qid: string) => {
+  log.info(`getPlanOrderByQid, uid: ${ctx.uid}, qid: ${qid}`);
+  try {
+    await verify([stringVerifier("qid", qid)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
   const oid = await ctx.cache.hgetAsync("qid-oid", qid);
+  const now = new Date();
   if (oid === null || oid === "") {
     return { code: 404, msg: "未找到对应订单信息" };
   } else {
@@ -380,7 +579,16 @@ server.callAsync("getOrderByQid", allowAll, "获取订单详情", "根据ｑｉ�
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
       const order_entities = await msgpack_decode(orep);
-      return { code: 200, data: order_entities };
+      const uid = order_entities["uid"];
+      if (ctx.domain === "admin") {
+        return { code: 200, data: order_entities, now: now };
+      } else {
+        if (uid === ctx.uid) {
+          return { code: 200, data: order_entities, now: now };
+        } else {
+          return { code: 501, msg: "用户信息获取错误，请联系客服协助处理，客服电话：4006869809" };
+        }
+      }
     }
   }
 });
@@ -388,10 +596,11 @@ server.callAsync("getOrderByQid", allowAll, "获取订单详情", "根据ｑｉ�
 
 server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "获取车辆对应所有订单", async (ctx: ServerContext, vid: string) => {
   log.info(`getOrdersByVid, uid: ${ctx.uid}, vid: ${vid}`);
-  if (!verify([uuidVerifier("vid", vid)], (errors: string[]) => {
-    throw { code: 400, msg: errors.join("\n") };
-  })) {
-    return;
+  try {
+    await verify([stringVerifier("vid", vid)]);
+  } catch (e) {
+    log.info(e);
+    return { code: 400, msg: e.message };
   }
   try {
     const oids = await ctx.cache.zrangeAsync(`orders-${vid}`, 0, -1);
@@ -410,7 +619,16 @@ server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "
           orders.push(o);
         }
       }
-      return { code: 200, data: orders };
+      const uid = orders[0]["uid"];
+      if (ctx.domain === "admin") {
+        return { code: 200, data: orders };
+      } else {
+        if (uid === ctx.uid) {
+          return { code: 200, data: orders };
+        } else {
+          return { code: 501, msg: "用户信息获取错误，请联系客服协助处理，客服电话：4006869809" };
+        }
+      }
     }
   } catch (e) {
     log.info("getOrdersByVid catch ERROR" + e);
@@ -420,35 +638,31 @@ server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "
 
 
 
-server.call("refresh", allowAll, "refresh", "刷新所有订单数据", (ctx: ServerContext, rep: ((result: any) => void)) => {
-  log.info("refresh");
-  const domain = ctx.domain;
-  const pkt: CmdPacket = { cmd: "refresh", args: [domain] };
-  rep({ code: 200, msg: "success" });
-});
-
 server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (ctx: ServerContext, order_id?: string) => {
   log.info(`refresh, order_id: ${order_id}`);
   if (order_id) {
     const oJson = await ctx.cache.hgetAsync("order-entities", order_id);
     const order_entities = await msgpack_decode(oJson);
     const state = order_entities["state"];
-    if (state === 1) {
-      const args = { type: 11, order_id: order_id };
-      ctx.push("order-events-disque", args);
-      return waitingAsync(ctx);
-    } else if (state === 2) {
-      const args = { type: 12, order_id: order_id };
-      ctx.push("order-events-disque", args);
-      return waitingAsync(ctx);
-    } else if (state === 3) {
-      const args = { type: 13, order_id: order_id };
-      ctx.push("order-events-disque", args);
-      return waitingAsync(ctx);
-    }
-  } else {
-    const args = { type: 14 };
+    const args = { type: 20, order_id: order_id };
     ctx.push("order-events-disque", args);
-    return waitingAsync(ctx);
+    return await waitingAsync(ctx);
+  } else {
+    const args = { type: 21 };
+    ctx.push("order-events-disque", args);
+    return await waitingAsync(ctx);
   }
 });
+
+// server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (ctx: ServerContext, order_id?: string) => {
+//   log.info(`refresh, order_id: ${order_id ? order_id : ""}`);
+//   if (order_id) {
+//     const pkt: CmdPacket = { cmd: "refresh", args: [order_id] };
+//     ctx.publish(pkt);
+//     return await waitingAsync(ctx);
+//   } else {
+//     const pkt: CmdPacket = { cmd: "refresh", args: [] };
+//     ctx.publish(pkt);
+//     return await waitingAsync(ctx);
+//   }
+// });

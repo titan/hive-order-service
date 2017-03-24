@@ -1,4 +1,4 @@
-import { BusinessEventContext, Processor, ProcessorContext, BusinessEventHandlerFunction, BusinessEventListener, rpc, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, waiting, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
+import { BusinessEventContext, Processor, ProcessorContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, waiting, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
@@ -106,14 +106,14 @@ async function async_plan_orders(db: PGClient, cache: RedisClient, domain: strin
       }
     }
     const oids = Object.keys(orders);
-    const prep = await rpc<Object>(domain, process.env["PLAN"], uid, "getPlans");
+    const prep = await rpcAsync<Object>(domain, process.env["PLAN"], uid, "getPlans");
     let plans = null;
     if (prep["code"] === 200) {
       plans = prep["data"];
     }
     for (const oid of oids) {
       // vehicle 信息 以及driver
-      const vrep = await rpc<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", orders[oid]["vid"]);
+      const vrep = await rpcAsync<Object>(domain, process.env["VEHICLE"], uid, "getVehicle", orders[oid]["vid"]);
       if (vrep["code"] === 200) {
         const vehicle = vrep["data"];
         orders[oid]["vehicle"] = vehicle;
