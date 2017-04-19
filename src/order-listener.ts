@@ -1,4 +1,4 @@
-import { BusinessEventContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, set_for_response, waiting, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
+import { BusinessEventContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, set_for_response, waiting, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode, rpc } from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
 import { CustomerMessage } from "recommend-library";
@@ -58,7 +58,7 @@ async function sendTmsg(oid: string, cache: RedisClient): Promise<void> {
     const st = order["start_at"];
     const sp = order["stop_at"];
     const start_at = `${st.getFullYear()}-${st.getMonth() + 1}-${st.getDate() + 1}` + " " + "00:00:00";
-    const stop_at = `${sp.getFullYear()}-${sp.getMonth() + 1}-${sp.getDate()}` + " " + "23:59:59";
+    const stop_at = `${sp.getFullYear()}-${sp.getMonth() + 1}-${sp.getDate() + 1}` + " " + "23:59:59";
     const postData = queryString.stringify({
       "user": String(openid),
       "CarNo": carNo,
@@ -136,132 +136,70 @@ listener.onEvent(async (ctx: BusinessEventContext, data: any) => {
     if (type === 0) {
       const rep = await cancel_event(ctx, data);
       log.info("cancel rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 1) {
       const rep = await create_event(ctx, data);
       log.info("create_plan_order rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 2) {
       const rep = await pay_event(ctx, data);
       log.info("pay rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 3) {
       const rep = await underWrite_event(ctx, data);
       log.info("underWrite rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 4) {
       const rep = await take_effect_event(ctx, data);
       log.info("take_effect rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 5) {
       const rep = await expired_event(ctx, data);
       log.info("expired rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 6) {
       const rep = await apply_withdraw_event(ctx, data);
       log.info("apply_withdraw rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 7) {
       const rep = await refuse_withdraw_event(ctx, data);
       log.info("refuse_withdraw rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 8) {
       const rep = await agree_withdraw_event(ctx, data);
       log.info("agree_withdraw rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 9) {
       const rep = await refund_event(ctx, data);
       log.info("refund rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 10) {
       const rep = await rename_no_event(ctx, data);
       log.info("rename_no rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 11) {
       const rep = await addDrivers_event(ctx, data);
       log.info("addDrivers rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 12) {
       const rep = await delDrivers_event(ctx, data);
       log.info("delDrivers rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 13) {
       const rep = await updateDrivingView_event(ctx, data);
       log.info("updateDrivingView rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     }
     else if (type === 20) {
       const rep = await refresh_plan_order(ctx, data);
       log.info("refresh_plan_order rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
     } else if (type === 21) {
       const rep = await refresh(ctx);
       log.info("refresh rep:" + JSON.stringify(rep));
-      if (rep["code"] === 500) {
-        return rep;
-      } else {
-        return rep;
-      }
+      return rep;
+    } else {
+      return { code: 403, msg: "forbidden" };
     }
   }
 });
@@ -302,7 +240,7 @@ async function imputedPrice(data, ctx): Promise<any> {
             const now = new Date();
             const n = moment([now.getFullYear(), now.getMonth() + 1]);
             const e1 = moment([r_time.getFullYear(), r_time.getMonth() + 1]);
-            const rtn = n.diff(e1, "year")
+            const rtn = n.diff(e1, "year");
             console.log("years" + rtn);
             if (rtn >= 11) {
               amount = parseFloat((real_value * 0.85).toFixed(2));
@@ -319,7 +257,7 @@ async function imputedPrice(data, ctx): Promise<any> {
         const promotion = quotation["promotion"];
         let summary = 0;
         const p_keys = Object.keys(plans);
-        const new_keys = p_keys.filter(key => key !== "67108864" || key !== "33554432");
+        const new_keys = p_keys.filter(key => key !== "67108864" && key !== "33554432");
         for (const key of new_keys) {
           for (const item of items) {
             if (String(item["plan"]["id"]) === key) {
@@ -367,7 +305,7 @@ async function create_event(ctx: BusinessEventContext, data: any): Promise<any> 
       const new_data = result["data"];
       let orderJson: Object = {};
       if (data["order_type"] === 1) {
-        orderJson = { id: evtid, type: data["type"], opid: ctx["uid"], oid: oid, vid: data["vid"], plans: new_data["plans"], order_type: data["order_type"], payment: new_data["payment"], summary: new_data["summary"], qid: data["qid"], expect_at: data["expect_at"], amount: new_data["amount"], real_value: new_data["real_value"], recommend: new_data["recommend"], ticket: ticket, no: order_no, pm_price: new_data["promotion"], owner: data["owner"], insured: data["insured"] };
+        orderJson = { id: evtid, type: data["type"], opid: ctx["uid"], oid: oid, vid: data["vid"], inviter: data["inviter"], plans: new_data["plans"], order_type: data["order_type"], payment: new_data["payment"], promotion: new_data["promotion"], summary: new_data["summary"], qid: data["qid"], expect_at: data["expect_at"], amount: new_data["amount"], real_value: new_data["real_value"], recommend: new_data["recommend"], ticket: ticket, no: order_no, pm_price: new_data["promotion"], owner: data["owner"], insured: data["insured"] };
       }
       await db.query("INSERT INTO order_events(id, oid, uid, event_type, order_type, data, occurred_at) VALUES($1, $2, $3, $4, $5, $6, $7)", [evtid, oid, ctx["uid"], 1, 1, orderJson, occurred_at]);
       if (data["order_type"] === 1) {
@@ -395,7 +333,7 @@ async function cancel_event(ctx: BusinessEventContext, data: any): Promise<any> 
     } else {
       const order_entities = await msgpack_decode(oJson);
       const state = order_entities["state"];
-      if (state !== 1 && state !== 2 && state !== 3 && state !== 4) {
+      if (state !== 1 && state !== 2 && state !== 3 && state !== 4 && state !== 7) {
         return { code: 501, msg: "该状态订单不支持直接取消" };
       } else {
         const orderJson = { last_state: state };
@@ -415,6 +353,51 @@ async function cancel_event(ctx: BusinessEventContext, data: any): Promise<any> 
 }
 
 
+// function pay_event(ctx: BusinessEventContext, data: any) {
+//   return new Promise((resolve, reject) => {
+//     const db: PGClient = ctx.db;
+//     const cache: RedisClient = ctx.cache;
+//     const evtid = uuid.v4();
+//     const o = cache.hgetAsync("order-entities", data["order_id"]);
+//     o.then((oJson) => {
+//       if (oJson === null || oJson === "") {
+//         return { code: 404, msg: "未找到对应订单信息" };
+//       } else {
+//         const order = msgpack_decode(oJson);
+//         order.then((order_entities) => {
+//           if (order_entities["state"] !== 1) {
+//             return { code: 501, msg: "该状态订单不支持支付" };
+//           } else {
+//             if (parseFloat(order_entities["payment"]) !== parseFloat(data["amount"])) {
+//               return { code: 502, msg: "实际支付金额有误" };
+//             } else {
+//               let commission_ratio = 0;
+//               if (data["payment_method"] === 1) {
+//                 commission_ratio = 0;
+//               } else if (data["payment_method"] === 2) {
+//                 commission_ratio = 0.01;
+//               }
+//               const occurred_at = new Date();
+//               const identity_no = order_entities["insured"]["identity_no"];
+//               const orderJson = { amount: data["amount"], identity_no: identity_no, payment_method: 1, commission_ratio: 0.01 };
+//               const event_type = 2;
+//               const order_type = 1;
+//               const d = db.query("INSERT INTO order_events(id, oid, uid, event_type, order_type, data, occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [evtid, data["order_id"], data["uid"], event_type, order_type, orderJson, occurred_at]);
+//               d.then((ress) => {
+//                 const result = pay(ctx, evtid, order_entities["no"]);
+//                 result.then((res) => {
+//                   log.info("res" + JSON.stringify(res));
+//                   resolve(res);
+//                 });
+//               });
+//             }
+//           }
+//         });
+//       }
+//     });
+//   });
+// }
+
 async function pay_event(ctx: BusinessEventContext, data: any): Promise<any> {
   try {
     const db: PGClient = ctx.db;
@@ -431,9 +414,15 @@ async function pay_event(ctx: BusinessEventContext, data: any): Promise<any> {
         if (parseFloat(order_entities["payment"]) !== parseFloat(data["amount"])) {
           return { code: 502, msg: "实际支付金额有误" };
         } else {
+          let commission_ratio = 0;
+          if (data["payment_method"] === 1) {
+            commission_ratio = 0;
+          } else if (data["payment_method"] === 2) {
+            commission_ratio = 0.01;
+          }
           const occurred_at = new Date();
           const identity_no = order_entities["insured"]["identity_no"];
-          const orderJson = { amount: data["amount"], identity_no: identity_no };
+          const orderJson = { amount: data["amount"], identity_no: identity_no, payment_method: data["payment_method"], commission_ratio: commission_ratio };
           const event_type = 2;
           const order_type = 1;
           await db.query("INSERT INTO order_events(id, oid, uid, event_type, order_type, data, occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7)", [evtid, data["order_id"], data["uid"], event_type, order_type, orderJson, occurred_at]);
@@ -775,7 +764,7 @@ async function updateDrivingView(ctx: BusinessEventContext, evtid: string): Prom
     const driving_rear_view = result["data"]["driving_rear_view"];
     const oid = result["oid"];
     await db.query("BEGIN");
-    await db.query("UPDATE plan_orders SET driving_frontal_view = $1,driving_rear_view = $2 WHERE id = $3", [driving_frontal_view, driving_rear_view, oid])
+    await db.query("UPDATE plan_orders SET driving_frontal_view = $1,driving_rear_view = $2 WHERE id = $3", [driving_frontal_view, driving_rear_view, oid]);
     await async_plan_orders(db, cache, ctx.domain, ctx.uid, result["oid"]);
     await db.query("COMMIT");
     return { code: 200, data: "success" };
@@ -849,11 +838,14 @@ async function cancel(ctx: BusinessEventContext, evtid: string): Promise<any> {
       state = 8;
       state_description = "支付后取消";
     } else if (last_state === 3) {
-      state = 9
+      state = 9;
       state_description = "核保后取消";
     } else if (last_state === 4) {
       state = 6;
       state_description = "已失效";
+    } else if (last_state === 7) {
+      state = 7;
+      state_description = "已取消";
     }
     const oid = result["oid"];
     const time = new Date();
@@ -867,14 +859,14 @@ async function cancel(ctx: BusinessEventContext, evtid: string): Promise<any> {
     const no = order_entities["no"];
     const qid = order_entities["qid"];
     const multi = bluebird.promisifyAll(cache.multi()) as Multi;
-    multi.hdelAsync("vid-poid", vid);
-    multi.zremAsync("plan-orders", oid);
-    multi.zremAsync("orders", oid);
-    multi.zremAsync("orders-" + uid, oid);
-    multi.zremAsync("orders-" + vid, oid);
-    multi.hdelAsync("orderNo-id", no);
-    multi.hdelAsync("qid-oid", qid);
-    multi.hdelAsync("order-entities", oid);
+    multi.hdel("vid-poid", vid);
+    multi.zrem("plan-orders", oid);
+    multi.zrem("orders", oid);
+    multi.zrem("orders-" + uid, oid);
+    multi.zrem("orders-" + vid, oid);
+    multi.hdel("orderNo-id", no);
+    multi.hdel("qid-oid", qid);
+    multi.hdel("order-entities", oid);
     await multi.execAsync();
     return { code: 200, data: oid };
   } catch (e) {
@@ -1005,7 +997,7 @@ async function expired(ctx: BusinessEventContext, evtid: string): Promise<any> {
     const state_description = "已到期";
     const time = new Date();
     await db.query("BEGIN");
-    await db.query("UPDATE plan_orders SET state = $1,state_description = $2, updated_at = $3 WHERE id = $4", [state, state_description, time, result["oid"]]);
+    await db.query("UPDATE plan_orders SET state = $1, state_description = $2, updated_at = $3 WHERE id = $4", [state, state_description, time, result["oid"]]);
     await db.query("COMMIT");
     await async_plan_orders(db, cache, ctx.domain, ctx.uid, result["oid"]);
     return { code: 200, data: result["oid"] };
@@ -1051,7 +1043,7 @@ async function underWrite(ctx: BusinessEventContext, evtid: string): Promise<any
     const state_description = "已核保";
     const time = new Date();
     await db.query("BEGIN");
-    await db.query("UPDATE plan_orders SET state = $1, state_description = $2, updated_at = $3, start_at =$4, stop_at = $5 WHERE id = $6", [state, state_description, time, data["start_at"], data["stop_at"], result["oid"]]);
+    await db.query("UPDATE plan_orders SET state = $1, state_description = $2, updated_at = $3, start_at = $4, stop_at = $5 WHERE id = $6", [state, state_description, time, data["start_at"], data["stop_at"], result["oid"]]);
     await db.query("COMMIT");
     await async_plan_orders(db, cache, ctx.domain, result["uid"], result["oid"]);
     return { code: 200, data: result["oid"] };
@@ -1063,8 +1055,11 @@ async function underWrite(ctx: BusinessEventContext, evtid: string): Promise<any
 }
 
 
+
+
+
 async function pay(ctx: BusinessEventContext, evtid: string, no: string): Promise<any> {
-  log.info("pay")
+  log.info("pay");
   const db: PGClient = ctx.db;
   const cache: RedisClient = ctx.cache;
   try {
@@ -1075,13 +1070,13 @@ async function pay(ctx: BusinessEventContext, evtid: string, no: string): Promis
     const state_description = "已支付";
     const paid_at = new Date();
     await db.query("BEGIN");
-    await db.query("UPDATE plan_orders SET state = $1, state_description = $2, paid_at= $3, updated_at = $4 WHERE id = $5", [state, state_description, paid_at, paid_at, result["oid"]]);
+    await db.query("UPDATE plan_orders SET state = $1, state_description = $2, payment_method = $3, commission_ratio = $4, paid_at= $5, updated_at = $6 WHERE id = $7", [state, state_description, data["payment_method"], data["commission_ratio"], paid_at, paid_at, result["oid"]]);
     await db.query("COMMIT");
+    await async_plan_orders(db, cache, ctx.domain, result["uid"], result["oid"]);
     const wrep = await rpcAsync<Object>(ctx.domain, process.env["WALLET"], result["uid"], "recharge", result["oid"]);
-    if (wrep["code"] === 200) {
-      await async_plan_orders(db, cache, ctx.domain, result["uid"], result["oid"]);
+    if (wrep["code"] === 200 || wrep["code"] === 504) {
       const prep = rpcAsync<Object>(ctx.domain, process.env["PERSON"], result["uid"], "setPersonVerified", data["identity_no"], true);
-      const openid = await cache.hgetAsync("wxuser", ctx.uid);
+      const openid = await cache.hgetAsync("wxuser", result["uid"]);
       const postData = queryString.stringify({
         "user": String(openid),
         "OrderNo": no,
@@ -1114,6 +1109,8 @@ async function pay(ctx: BusinessEventContext, evtid: string, no: string): Promis
       });
       req.write(postData);
       req.end();
+      const plrep = rpcAsync<Object>(ctx.domain, process.env["PLAN"], result["uid"], "increaseJoinedCount");
+      log.info("prep" + JSON.stringify(plrep));
       return { code: 200, data: result["oid"] };
     } else {
       log.info("wrep" + JSON.stringify(wrep));
@@ -1143,7 +1140,7 @@ async function rename_no(ctx: BusinessEventContext, evtid: string): Promise<any>
     const updated_at = new Date();
     await db.query("UPDATE plan_orders SET no = $1,updated_at = $2 WHERE id = $3", [new_order_no, updated_at, result["oid"]]);
     await ctx.cache.hdelAsync("orderNo-id", order_no);
-    await async_plan_orders(db, cache, ctx.domain, ctx.uid, result["oid"]);
+    await async_plan_orders(db, cache, ctx.domain, result["uid"], result["oid"]);
     return { code: 200, data: new_order_no };
   } catch (e) {
     log.info(e);
@@ -1163,8 +1160,8 @@ async function create_plan_order(ctx: BusinessEventContext, evtid: string): Prom
     const result = dbrep["rows"][0];
     const data = result["data"];
     await db.query("BEGIN");
-    await db.query("INSERT INTO plan_orders(id, no, uid, qid, vid, state, state_description, summary, payment,owner, insured, promotion, service_ratio, real_value, ticket, recommend, expect_at, created_at, updated_at, evtid) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11, $12, $13,$14, $15, $16, $17, $18, $19, $20)", [data["oid"], data["no"], result["uid"], data["qid"], data["vid"], 1, "已创建", data["summary"], data["payment"], data["owner"], data["insured"], data["promotion"], 0.2, data["real_value"], data["ticket"], data["recommend"], data["expect_at"], start_at, start_at, evtid]);
-    const prep = await rpcAsync<Object>(ctx.domain, process.env["PLAN"], ctx.uid, "getPlans", ctx.uid);
+    await db.query("INSERT INTO plan_orders(id, no, uid, qid, vid, state, state_description, summary, payment,owner, insured, promotion, service_ratio, real_value, recommend,inviter, expect_at, created_at, updated_at, evtid) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11, $12, $13, $14, $15, $16, $17, $18, $19, $20)", [data["oid"], data["no"], result["uid"], data["qid"], data["vid"], 1, "已创建", data["summary"], data["payment"], data["owner"], data["insured"], data["promotion"], 0.2, data["real_value"], data["recommend"], data["inviter"], data["expect_at"], start_at, start_at, evtid]);
+    const prep = await rpcAsync<Object>(ctx.domain, process.env["PLAN"], result["uid"], "getPlans");
     if (prep["code"] === 200) {
       const new_plans = prep["data"];
       for (const plan in data["plans"]) {
@@ -1246,7 +1243,7 @@ async function create_sale_order(ctx: BusinessEventContext, evtid: string): Prom
 
 
 async function async_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<any> {
-  const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.uid AS o_uid, o.qid AS o_qid, o.vid AS o_vid, o.state AS o_state, o.state_description AS o_state_description, o.summary AS o_summary, o.payment AS o_payment, o.owner AS o_owner, o.insured AS o_insured, o.promotion AS o_promotion, o.service_ratio AS o_service_ratio, o.real_value AS o_real_value, o.ticket AS o_ticket, o.recommend AS o_recommend, o.expect_at AS o_expect_at, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at,o.driving_frontal_view AS o_driving_frontal_view, o.driving_rear_view AS o_driving_rear_view, o.created_at AS o_created_at, o.updated_at AS o_updated_at, o.evtid AS o_evtid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.amount AS oi_amount FROM plan_order_items AS oi INNER JOIN plan_orders AS o ON o.id = oi.oid WHERE o.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
+  const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.uid AS o_uid, o.qid AS o_qid, o.vid AS o_vid, o.state AS o_state, o.state_description AS o_state_description, o.summary AS o_summary, o.payment AS o_payment, o.owner AS o_owner, o.insured AS o_insured, o.promotion AS o_promotion, o.service_ratio AS o_service_ratio, o.payment_method AS o_payment_method, o.commission_ratio AS o_commission_ratio, o.real_value AS o_real_value, o.recommend AS o_recommend,o.inviter AS o_inviter, o.expect_at AS o_expect_at, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at,o.driving_frontal_view AS o_driving_frontal_view, o.driving_rear_view AS o_driving_rear_view, o.created_at AS o_created_at, o.updated_at AS o_updated_at, o.evtid AS o_evtid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.amount AS oi_amount FROM plan_order_items AS oi INNER JOIN plan_orders AS o ON o.id = oi.oid WHERE o.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
   const orders = {};
   try {
     for (const row of result.rows) {
@@ -1272,15 +1269,17 @@ async function async_plan_orders(db: PGClient, cache: RedisClient, domain: strin
           state_description: trim(row["o_state_description"]),
           summary: parseFloat(row["o_summary"]),
           payment: parseFloat(row["o_payment"]),
+          payment_method: row["o_payment_method"],
+          commission_ratio: parseFloat(row["o_commission_ratio"]),
           owner_id: row["o_owner"],
           insured_id: row["o_insured"],
           owner: null,
           insured: null,
-          promotion: row["o_promotion"],
-          service_ratio: row["o_service_ratio"],
+          promotion: parseFloat(row["o_promotion"]),
+          service_ratio: parseFloat(row["o_service_ratio"]),
           real_value: row["o_real_value"],
-          ticket: trim(row["o_ticket"]),
           recommend: trim(row["o_recommend"]),
+          inviter: trim(row["o_inviter"]),
           drivers: [],
           items: [{
             id: row.oi_id,
@@ -1310,7 +1309,7 @@ async function async_plan_orders(db: PGClient, cache: RedisClient, domain: strin
       plans = prep["data"];
     }
     for (const oid of oids) {
-      //　获取drivers
+      // 获取drivers
       const drep = await db.query("SELECT pid FROM drivers WHERE oid = $1", [oid]);
       const dids = [];
       for (const row of drep["rows"]) {
