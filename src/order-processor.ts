@@ -1,7 +1,6 @@
 import { BusinessEventContext, Processor, ProcessorContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, waiting, msgpack_decode_async, msgpack_encode_async } from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
-import { CustomerMessage } from "recommend-library";
 import * as bluebird from "bluebird";
 import * as bunyan from "bunyan";
 import * as uuid from "uuid";
@@ -32,23 +31,6 @@ const log = bunyan.createLogger({
   ]
 });
 
-processor.callAsync("getInsuredUid", async (ctx: ProcessorContext, insured: string): Promise<any> => {
-  log.info(`getInsuredUid, insured: ${insured}`);
-  try {
-    const db: PGClient = ctx.db;
-    const cache: RedisClient = ctx.cache;
-    const dbrep = await db.query("SELECT uid FROM plan_orders WHERE insured = $1 AND state >2", [insured]);
-    if (dbrep["rowCount"] !== 0) {
-      const uid = dbrep["rows"][0]["uid"];
-      return { code: 200, data: uid };
-    } else {
-      return { code: 404, msg: "获取订单信息失败(ocb404)" };
-    }
-  } catch (e) {
-    log.info(e);
-    return { code: 500, msg: e.message };
-  }
-});
 
 processor.callAsync("cancel", async (ctx: ProcessorContext, order_id: string): Promise<any> => {
   log.info(`cancel, order_id: ${order_id}`);
