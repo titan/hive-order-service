@@ -1,15 +1,22 @@
 {
   "dependencies": {
+     "@types/bluebird": "^3.0.36",
     "@types/msgpack-lite": "^0.1.1",
     "@types/pg-pool": "0.0.2",
     "@types/redis": "^0.12.33",
+    "@types/uuid": "2.0.29",
     "bunyan": "^1.8.1",
-    "hive-service": "git+http://git.fengchaohuzhu.com:10080/Titan/hive-service.git",
-    "hive-verify": "git+http://git.fengchaohuzhu.com:10080/feiluo/hive-verify.git",
-    "recommend-library": "git+http://git.fengchaohuzhu.com:10080/agent/recommend-library.git",
+    "hive-service": "git+ssh://git@git.fengchaohuzhu.com:10022/server/hive-service.git",
+    "hive-verify": "git+ssh://git@git.fengchaohuzhu.com:10022/server/hive-verify.git",
+    "recommend-library": "git+ssh://git@git.fengchaohuzhu.com:10022/agent/recommend-library.git",
+    "hive-disque": "git+ssh://git@git.fengchaohuzhu.com:10022/server/hive-disque.git",
     "msgpack-lite": "^0.1.20",
     "nanomsg": "^3.2.1",
+    "uuid":"^3.0.1",
     "pg-pool": "^1.4.0",
-    "redis": "^2.6.2"
+    "bluebird": "^3.4.7",
+    "redis": "^2.6.2",
+    "querystring": "^0.2.0",
+    "http": "^0.0.0"
   }
 }

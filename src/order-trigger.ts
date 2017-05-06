@@ -1,17 +1,11 @@
+
+import { BusinessEventContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, set_for_response, waiting, msgpack_decode_async, msgpack_encode_async } from "hive-service";
 import * as bluebird from "bluebird";
 import * as msgpack from "msgpack-lite";
 import * as bunyan from "bunyan";
-import { createClient, RedisClient} from "redis";
+import { createClient, RedisClient } from "redis";
 import { Socket, socket } from "nanomsg";
 
-declare module "redis" {
-  export interface RedisClient extends NodeJS.EventEmitter {
-    hgetAsync(key: string, field: string): Promise<any>;
-  }
-  export interface Multi extends NodeJS.EventEmitter {
-    execAsync(): Promise<any>;
-  }
-}
 
 const log = bunyan.createLogger({
   name: "order-trigger",
@@ -33,45 +27,38 @@ const log = bunyan.createLogger({
   ]
 });
 
-export function run () {
-
-  const cache: RedisClient = bluebird.promisifyAll(createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"])) as RedisClient;
-
-  const vehicle_socket: Socket = socket("sub");
-  vehicle_socket.connect(process.env["VEHICLE-TRIGGER"]);
-  vehicle_socket.on("data", function (buf) {
-    const obj = msgpack.decode(buf);
-    const vid = obj["vid"];
-    const vehicle = obj["vehicle"];
-    log.info(`Got vehicle ${vid} from trigger`);
+const person_socket: Socket = socket("sub");
+export function run() {
+  const cache: RedisClient = bluebird.promisifyAll(createClient(process.env["CACHE_PORT"], process.env["CACHE_HOST"], { "return_buffers": true })) as RedisClient;
+  person_socket.connect(process.env["PERSON-TRIGGER"]);
+  person_socket.on("data", function (buf) {
     (async () => {
       try {
-        const poid: string = await cache.hgetAsync("vid-poid", vid);
-        const soid: string = await cache.hgetAsync("vid-soid", vid);
-        const oids: string[] = [];
-        if (poid) {
-          oids.push(poid);
+        const obj = await msgpack_decode_async(buf);
+        log.info("obj" + JSON.stringify(obj));
+        const pid = obj["pid"];
+        const person = obj["person"];
+        log.info(`Got person ${pid} from trigger`);
+        const o_buffer = await cache.hgetallAsync("order-entitties");
+        const orders = [];
+        for (const o of o_buffer) {
+          const order = await msgpack_decode_async(o);
+          orders.push(order);
         }
-        if (soid) {
-          oids.push(soid);
-        }
-        if (oids.length > 0) {
-          const multi = cache.multi();
-          for (const oid of oids) {
-            log.info(`update order ${oid} with vehicle ${vid}`);
-            const orderstr: string = await cache.hgetAsync("order-entities", oid);
-            const order = JSON.parse(orderstr);
-            order["vehicle"] = vehicle;
-            multi.hset("order-entities", oid, JSON.stringify(order));
+        const effective_orders = orders.filter(o => o["insured"]["id"] === pid);
+        if (effective_orders.length > 0) {
+          for (const effective_order of effective_orders) {
+            effective_order["insured"] = person;
+            const e_buffer = await msgpack_encode_async(effective_order);
+            const oid = effective_order["id"];
+            await cache.hsetAsync("order-entitties", oid, e_buffer);
           }
-          await multi.execAsync();
-          log.info(`update vehicle ${vid} of orders done`);
         }
       } catch (e) {
         log.error(e);
       }
     })();
   });
-  log.info(`order-trigger is running on ${process.env["VEHICLE-TRIGGER"]}`);
+  log.info(`order-trigger is running on ${process.env["PERSON-TRIGGER"]}`);
 }
 
