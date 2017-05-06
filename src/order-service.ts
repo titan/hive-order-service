@@ -25,8 +25,8 @@ const log = bunyan.createLogger({
   ]
 });
 
-const loginfo = (...x) => log.info(...x);
-const logerror = (...x) => log.error(...x);
+const loginfo = (...x) => log.info(x);
+const logerror = (...x) => log.error(x);
 
 const config: Config = {
   modname: "ORDER",

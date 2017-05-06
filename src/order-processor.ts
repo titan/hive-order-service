@@ -216,7 +216,7 @@ async function async_plan_orders(db: PGClient, cache: RedisClient, domain: strin
       multi.zadd("orders", updated_at, oid);
       multi.zadd("orders-" + order["uid"], updated_at, oid);
       multi.zadd("orders-" + order["vid"], updated_at, oid);
-      multi.hset("orderNo-id", order_no, oid);
+      multi.hset("orderno-id", order_no, oid);
       multi.hset("qid-oid", qid, oid);
       multi.hset("order-entities", oid, newOrder);
     }
