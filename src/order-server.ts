@@ -47,7 +47,7 @@ async function checkOrderEffectTime(orders): Promise<any> {
         const now_time = new Date().getTime();
         const stop_time = new Date(order["stop_at"]).getTime();
         const time = stop_time - now_time;
-        if (time < 30 * 24 * 60 * 60 * 1000) {
+        if (time < 3 * 30 * 24 * 60 * 60 * 1000) {
           length += 1;
         }
       }
@@ -59,85 +59,59 @@ async function checkOrderEffectTime(orders): Promise<any> {
   }
 }
 
-async function checkOrderLimit(domain: string, uid: string, owner: string, insured: string, cache: RedisClient): Promise<any> {
+async function checkOrderLimit(domain: string, uid: string, vid: string, owner: string, insured: string, cache: RedisClient): Promise<any> {
   try {
-    const oids = await cache.zrangeAsync(`orders-${uid}`, 0, -1);
-    log.info("oid" + oids);
-    if (oids !== null && oids.length !== 0) {
-      const multi = bluebird.promisifyAll(cache.multi()) as Multi;
-      for (const oid of oids) {
-        multi.hget("order-entities", String(oid));
-      }
-      const result: Object[] = [];
-      const oreps = await multi.execAsync();
-      for (const pkt of oreps) {
-        if (pkt !== null) {
-          const order = await msgpack_decode_async(pkt);
-          result.push(order);
-        }
-      }
-      const wait_pay_orders = result.filter(o => o["state"] === 1);
-      if (wait_pay_orders.length === 0) {
-        const orders = result.filter(o => o["state"] !== 1 && o["state"] !== 5 && o["state"] !== 6 && o["state"] !== 7 && o["state"] !== 8 && o["state"] !== 9);
-        let max_orders = 2;
-        const vrep = await rpcAsync<Object>(domain, process.env["PROFILE"], uid, "getUser");
-        if (vrep["code"] === 200) {
-          max_orders = parseInt(vrep["data"]["max_orders"] || 2);
-        };
-        const len = orders.length;
-        if (len < max_orders) {
-          return { code: 200, data: "OK" };
-        } else {
-          const orderEffect = await checkOrderEffectTime(orders);
-          if (len - orderEffect < max_orders) {
-            return { code: 200, data: "OK" };
-          } else {
-            return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
+    const mrep = await rpcAsync<Object>(domain, process.env["MOBILE"], uid, "getOwnerShip", vid);
+    if (mrep.code === 200) {
+      const owner_id = mrep.data["owner"];
+      if (owner_id === owner) {
+        const oids = await cache.zrangeAsync(`orders-${uid}`, 0, -1);
+        log.info("oid" + oids);
+        if (oids !== null && oids.length !== 0) {
+          const multi = bluebird.promisifyAll(cache.multi()) as Multi;
+          for (const oid of oids) {
+            multi.hget("order-entities", String(oid));
           }
+          const result: Object[] = [];
+          const oreps = await multi.execAsync();
+          for (const pkt of oreps) {
+            if (pkt !== null) {
+              const order = await msgpack_decode_async(pkt);
+              result.push(order);
+            }
+          }
+          const wait_pay_orders = result.filter(o => o["state"] === 1);
+          if (wait_pay_orders.length === 0) {
+            const orders = result.filter(o => o["state"] !== 1 && o["state"] !== 5 && o["state"] !== 6 && o["state"] !== 7 && o["state"] !== 8 && o["state"] !== 9);
+            let max_orders = 2;
+            const vrep = await rpcAsync<Object>(domain, process.env["PROFILE"], uid, "getUser");
+            if (vrep["code"] === 200) {
+              max_orders = parseInt(vrep["data"]["max_orders"] || 2);
+            };
+            const len = orders.length;
+            if (len < max_orders) {
+              return { code: 200, data: "OK" };
+            } else {
+              const orderEffect = await checkOrderEffectTime(orders);
+              if (len - orderEffect < max_orders) {
+                return { code: 200, data: "OK" };
+              } else {
+                return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
+              }
+            }
+          } else {
+            return { code: 501, msg: "您有尚未完成的订单，请先处理该订单" };
+          }
+        } else {
+          return { code: 200, data: "ok" };
         }
       } else {
-        return { code: 501, msg: "您有尚未完成的订单，请先处理该订单" };
+        log.info("该车绑定车主与下单车主不一致");
+        return { code: 501, msg: "车主信息异常" };
       }
-      // const sameOrderInsured = orders.filter(order => order["insured"]["identity_no"] === order["owner"]["identity_no"]);
-      // log.info("sameOrderInsured" + sameOrderInsured.length);
-      // const diffOrderInsured = orders.filter(order => order["insured"]["identity_no"] !== order["owner"]["identity_no"]);
-      // log.info("diffOrderInsured" + diffOrderInsured.length);
-      // if (insured === owner) {
-      //   if (sameOrderInsured.length < 3) {
-      //     return { code: 200, data: "ok" };
-      //   } else {
-      //     const orderEffect = await checkOrderEffectTime(sameOrderInsured);
-      //     log.info("orderEffect" + JSON.stringify(orderEffect));
-      //     if (orderEffect === 200) {
-      //       return { code: 200, data: "ok" };
-      //     } else {
-      //       const notPay = sameOrderInsured.filter(order => order["state"] === 1);
-      //       if (notPay.length !== 0) {
-      //         return { code: 501, msg: "您有尚未完成的订单,请处理后再获取报价" };
-      //       } else {
-      //         return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
-      //       }
-      //     }
-      //   }
-      // } else {
-      //   if (diffOrderInsured.length < 2) {
-      //     return { code: 200, data: "ok" };
-      //   } else {
-      //     const orderEffect = await checkOrderEffectTime(diffOrderInsured);
-      //     if (orderEffect === 200) {
-      //       return { code: 200, data: "ok" };
-      //     } else {
-      //       const notPay = diffOrderInsured.filter(order => order["state"] === 1);
-      //       if (notPay.length !== 0) {
-      //         return { code: 501, msg: "您有尚未完成的订单,请处理后再获取报价" };
-      //       } else {
-      //         return { code: 501, msg: "该车主参加的互助车辆已达上限，不可继续添加" };
-      //       }
-      //     }
-      //   }
-      // }
     } else {
-      return { code: 200, data: "ok" };
+      log.info("该车未建立绑定关系");
+      return { code: 501, msg: "用户信息异常" };
     }
   } catch (e) {
     log.info(e);
@@ -155,16 +129,14 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
     return { code: 400, msg: e.message };
   }
   try {
-    // let inviter = null;
     const urep = await rpcAsync<Object>(ctx.domain, process.env["PROFILE"], ctx.uid, "getUser");
     if (urep["code"] === 200) {
       const inviter = urep["data"]["inviter"];
-      const old_insured = urep["data"]["insured"];
-      if (insured === owner && insured === old_insured) {
+      if (insured === owner) {
         const oid = await ctx.cache.hgetAsync("vid-poid", vid);
         const new_expect_at = new Date(new Date(expect_at).getTime() - 8 * 60 * 60 * 1000);
         if (oid === null || oid === "") {
-          const result = await checkOrderLimit(ctx.domain, ctx.uid, owner, insured, ctx.cache);
+          const result = await checkOrderLimit(ctx.domain, ctx.uid, vid, owner, insured, ctx.cache);
           if (result["code"] === 200) {
             const args = { type: 1, order_type: 1, vid: vid, inviter: inviter, owner: owner, insured: insured, plans: plans, qid: qid, expect_at: new_expect_at };
             ctx.push("order-events-disque", args);
@@ -182,13 +154,13 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
             const now_time = new Date().getTime();
             const stop_time = new Date(order_entities["stop_at"]).getTime();
             const time = stop_time - now_time;
-            if (time > 30 * 24 * 60 * 60 * 1000) {
+            if (time > 90 * 24 * 60 * 60 * 1000) {
               return { code: 501, msg: "订单距失效时间超过三个月同一辆车不允许下重复下单" };
             }
           } else if (order_entities["state"] === 1) {
             return { code: 501, msg: "该车有尚未完成订单，请先处理该订单" };
           } else {
-            const result = await checkOrderLimit(ctx.domain, ctx.uid, owner, insured, ctx.cache);
+            const result = await checkOrderLimit(ctx.domain, ctx.uid, vid, owner, insured, ctx.cache);
             if (result["code"] === 200) {
               const args = { type: 1, order_type: 1, vid: vid, inviter: inviter, owner: owner, insured: insured, plans: plans, qid: qid, expect_at: new_expect_at };
               ctx.push("order-events-disque", args);
@@ -561,7 +533,7 @@ server.callAsync("getPlanOrdersByUser", allowAll, "获取订单列表", "获得�
   }
 });
 
-server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据ｖｉｄ获取计划订单", async (ctx: ServerContext, vid: string) => {
+server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据vid获取计划订单", async (ctx: ServerContext, vid: string) => {
   log.info(`getPlanOrderByVehicle, uid: ${ctx.uid}, vid: ${vid}`);
   try {
     await verify([stringVerifier("vid", vid)]);
@@ -594,28 +566,6 @@ server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据�
   }
 });
 
-// 通过vid获取司机单
-server.callAsync("getDriverOrderByVehicle", allowAll, "通过vid获取司机单", "通过vid获取司机单", async (ctx: ServerContext, vid: string) => {
-  log.info(`getDriverOrderByVehicle, uid: ${ctx.uid}, vid: ${vid}`);
-  try {
-    await verify([stringVerifier("vid", vid)]);
-  } catch (e) {
-    log.info(e);
-    return { code: 400, msg: e.message };
-  }
-  try {
-    const dorep = await ctx.cache.hgetAsync("order-driver-entities", vid);
-    if (dorep === null || dorep === "") {
-      return { code: 404, msg: "未找到对应驾驶人" };
-    } else {
-      const drivers = await msgpack_decode_async(dorep);
-      return { code: 200, data: drivers };
-    }
-  } catch (e) {
-    log.info("getDriverOrderByVehicle catch ERROR" + e);
-    return { code: 500, msg: e.message };
-  }
-});
 
 server.callAsync("getPlanOrderByQid", allowAll, "获取订单详情", "根据ｑｉｄ获取订单详情", async (ctx: ServerContext, qid: string) => {
   log.info(`getPlanOrderByQid, uid: ${ctx.uid}, qid: ${qid}`);
@@ -692,6 +642,20 @@ server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "
   }
 });
 
+server.callAsync("getDeletedPlanOrder", allowAll, "获取订单信息", "获取数据库已取消订单信息", async (ctx: ServerContext, oid: string): Promise<any> => {
+  log.info(`getInnerOrder, oid: ${oid}`);
+  try {
+    await verify([uuidVerifier("oid", oid)]);
+  } catch (e) {
+    log.info(e);
+    ctx.report(1, e);
+    return { code: 400, msg: e.message };
+  }
+  const pkt: CmdPacket = { cmd: "getDeletedPlanOrder", args: [oid] };
+  ctx.publish(pkt);
+  return await waitingAsync(ctx);
+});
+
 server.callAsync("getPlanOrderByNo", allowAll, "获取订单", "根据订单号获取对应订单", async (ctx: ServerContext, no: string) => {
   log.info(`getPlanOrderByNo, domain: ${ctx.domain}, uid: ${ctx.uid}, no: ${no}`);
   try {
@@ -711,7 +675,7 @@ server.callAsync("getPlanOrderByNo", allowAll, "获取订单", "根据订单号�
         if (ctx.uid === order.uid) {
           return { code: 200, data: order };
         } else {
-          return { code: 403, msg: `无权获取订单 ${no}`};
+          return { code: 403, msg: `无权获取订单 ${no}` };
         }
       }
     } else {
@@ -734,12 +698,6 @@ server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (c
     ctx.push("order-events-disque", args);
     return await waitingAsync(ctx);
   }
-});
-
-server.callAsync("test", adminOnly, "refresh", "刷新订单数据", async (ctx: ServerContext, type: number) => {
-  const args = { type: 14, type1: type };
-  ctx.push("order-events-disque", args);
-  return await waitingAsync(ctx);
 });
 
 

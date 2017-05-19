@@ -1,4 +1,4 @@
-import { BusinessEventContext, Processor, ProcessorContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, waiting, msgpack_decode_async, msgpack_encode_async } from "hive-service";
+import { BusinessEventContext, Processor, ProcessorContext, BusinessEventHandlerFunction, BusinessEventListener, rpcAsync, Result, ProcessorFunction, AsyncServerFunction, CmdPacket, Permission, waiting, msgpack_decode_async, msgpack_encode_async } from "hive-service";
 import { Client as PGClient, QueryResult } from "pg";
 import { RedisClient, Multi } from "redis";
 import * as bluebird from "bluebird";
@@ -7,7 +7,12 @@ import * as uuid from "uuid";
 import * as http from "http";
 import * as queryString from "querystring";
 import * as Disq from "hive-disque";
-
+import { OrderEvent, PlanOrder } from "order-library";
+import { User } from "profile-library";
+import { Plan } from "plan-library";
+import { Vehicle } from "vehicle-library";
+import { Quotation } from "quotation-library";
+import { Person } from "person-library";
 
 export const processor = new Processor();
 
@@ -29,6 +34,118 @@ const log = bunyan.createLogger({
       count: 3        // keep 7 back copies
     }
   ]
+});
+
+processor.callAsync("getDeletedPlanOrder", async (ctx: ProcessorContext, oid: string): Promise<any> => {
+  log.info(`getDeletedPlanOrder, oid: ${oid}`);
+  const db: PGClient = ctx.db;
+  const cache: RedisClient = ctx.cache;
+  try {
+    const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.uid AS o_uid, o.qid AS o_qid, o.vid AS o_vid, o.state AS o_state, o.state_description AS o_state_description, o.summary AS o_summary, o.payment AS o_payment, o.owner AS o_owner, o.insured AS o_insured, o.promotion AS o_promotion, o.service_ratio AS o_service_ratio, o.payment_method AS o_payment_method, o.commission_ratio AS o_commission_ratio, o.real_value AS o_real_value, o.recommend AS o_recommend,o.inviter AS o_inviter, o.expect_at AS o_expect_at, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at,o.driving_frontal_view AS o_driving_frontal_view, o.driving_rear_view AS o_driving_rear_view, o.created_at AS o_created_at, o.updated_at AS o_updated_at, o.evtid AS o_evtid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.amount AS oi_amount FROM plan_order_items AS oi INNER JOIN plan_orders AS o ON o.id = oi.oid WHERE o.id = $1", [oid]);
+    let order = {};
+    for (const row of result.rows) {
+      if (order["id"]) {
+        order["items"].push({
+          id: row.oi_id,
+          pid: row.oi_pid,
+          price: row.oi_price,
+          amount: row.oi_amount,
+          plan: null
+        });
+      } else {
+        order = {
+          id: row["o_id"],
+          no: row["o_no"],
+          uid: row["o_uid"],
+          pgid: row["o_pgid"],
+          qid: row["o_qid"],
+          vid: row["o_vid"],
+          vehicle: null,
+          state: row["o_state"],
+          state_description: trim(row["o_state_description"]),
+          summary: parseFloat(row["o_summary"]),
+          payment: parseFloat(row["o_payment"]),
+          payment_method: row["o_payment_method"],
+          commission_ratio: parseFloat(row["o_commission_ratio"]),
+          owner_id: row["o_owner"],
+          insured_id: row["o_insured"],
+          owner: null,
+          insured: null,
+          promotion: parseFloat(row["o_promotion"]),
+          service_ratio: parseFloat(row["o_service_ratio"]),
+          real_value: row["o_real_value"],
+          recommend: trim(row["o_recommend"]),
+          inviter: trim(row["o_inviter"]),
+          drivers: [],
+          items: [{
+            id: row.oi_id,
+            pid: row.oi_pid,
+            plan: null,
+            price: row.oi_price,
+            amount: row.oi_amount
+          }],
+          expect_at: row["o_expect_at"],
+          start_at: row["o_start_at"],
+          stop_at: row["o_stop_at"],
+          paid_at: row["o_paid_at"],
+          created_at: row["o_created_at"],
+          updated_at: row["o_updated_at"],
+          evtid: row["o_evtid"],
+          driving_frontal_view: row["o_driving_frontal_view"],
+          driving_rear_view: row["o_driving_rear_view"]
+        };
+      }
+    }
+    const prep: Result<Plan> = await rpcAsync<Plan>(ctx.domain, process.env["PLAN"], ctx.uid, "getPlans");
+    let plans = null;
+    if (prep.code === 200) {
+      plans = prep.data;
+    }
+    // 获取drivers
+    const drep = await db.query("SELECT pid FROM drivers WHERE oid = $1", [oid]);
+    const dids = [];
+    for (const row of drep["rows"]) {
+      dids.push(row.pid);
+    }
+    for (const did of dids) {
+      const orep: Result<Person> = await rpcAsync<Person>(ctx.domain, process.env["PERSON"], ctx.uid, "getPerson", did);
+      if (orep.code === 200) {
+        order["drivers"].push(orep["data"]);
+      }
+    }
+    // vehicle 信息
+    const vrep: Result<Vehicle> = await rpcAsync<Vehicle>(ctx.domain, process.env["VEHICLE"], ctx.uid, "getVehicle", order["vid"]);
+    if (vrep.code === 200) {
+      const vehicle = vrep.data;
+      order["vehicle"] = vehicle;
+    }
+    // 车主信息
+    const orep: Result<Person> = await rpcAsync<Person>(ctx.domain, process.env["PERSON"], ctx.uid, "getPerson", order["owner_id"]);
+    if (orep.code === 200) {
+      order["owner"] = orep.data;
+    }
+    // 投保人信息
+    const irep: Result<Person> = await rpcAsync<Person>(ctx.domain, process.env["PERSON"], ctx.uid, "getPerson", order["insured_id"]);
+    if (irep.code === 200) {
+      order["insured"] = irep["data"];
+    }
+    // plan 信息
+    for (const item of order["items"]) {
+      for (const plan of plans) {
+        if (item["pid"] === plan["id"]) {
+          item["plan"] = plan;
+          delete item["pid"];
+        }
+      }
+    }
+    order["items"].sort(function (a, b) {
+      return a["plan"]["id"] - b["plan"]["id"];
+    });
+    return { code: 200, data: order };
+  } catch (e) {
+    log.info(e);
+    return { code: 500, msg: e.message };
+  }
 });
 
 

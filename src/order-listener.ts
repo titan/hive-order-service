@@ -106,7 +106,96 @@ async function sendTmsg(oid: string, cache): Promise<void> {
     return;
   }
 }
+async function sendTmsgByrecommend(domain: string, oid: string, paid_at: Date, recommend: string, name: string, uid: string, cache): Promise<void> {
+  try {
+    const openid = await cache.hgetAsync("wxuser", recommend);
+    const urep: Result<Person> = await rpcAsync<Person>(domain, process.env["PROFILE"], recommend, "getInsured");
+    if (urep.code === 200) {
+      const recommend_name = urep.data.name;
+      const date = new Date(paid_at.getTime() + 8 * 60 * 60 * 1000);
+      const time = date.getFullYear() + "年" + (date.getMonth() + 1) + "月" + date.getDate() + "日" + date.toLocaleTimeString();
+      const postData = queryString.stringify({
+        "user": String(openid),
+        "name": name,
+        "recommend": recommend_name,
+        "time": time,
+      });
+      const options = {
+        hostname: wxhost,
+        port: 80,
+        path: "/wx/tmsgRecommendSuccess",
+        method: "GET",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Length": Buffer.byteLength(postData)
+        }
+      };
+      const req = http.request(options, (res) => {
+        log.info("Status: " + res.statusCode);
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          console.log(`BODY: ${chunk}`);
+        });
+        res.on("end", () => {
+          console.log("No more data in response.");
+        });
+      });
+      req.on("error", (e) => {
+        console.log(`problem with request: ${e.message}`);
+      });
+      req.write(postData);
+      req.end();
+      return;
+    } else {
+      log.info("urep" + JSON.stringify(urep));
+      return;
+    }
+  } catch (e) {
+    log.info(e + "err in sendTmsg for orderEffective");
+    return;
+  }
+}
 
+async function sendTmsgBypaySuccess(oid: string, openid: string, no: string, amount: number, cache): Promise<void> {
+  try {
+    const postData = queryString.stringify({
+      "user": String(openid),
+      "OrderNo": no,
+      "Plan": "好司机 互助计划",
+      "Price": amount,
+      "orderId": oid
+    });
+    const options = {
+      hostname: wxhost,
+      port: 80,
+      path: "/wx/tmsgPaySuccess",
+      method: "GET",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(postData)
+      }
+    };
+    const req = http.request(options, (res) => {
+      log.info("Status: " + res.statusCode);
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        console.log(`BODY: ${chunk}`);
+      });
+      res.on("end", () => {
+        console.log("No more data in response.");
+      });
+    });
+    req.on("error", (e) => {
+      console.log(`problem with request: ${e.message}`);
+    });
+    req.write(postData);
+    req.end();
+    return;
+  } catch (e) {
+    log.info(e + "err in sendTmsg for orderEffective");
+    return;
+  }
+}
 
 async function increase_plan_order_no(cache, plans): Promise<string> {
   try {
@@ -262,37 +351,13 @@ async function imputedPrice(data, ctx): Promise<any> {
       const ticket = prep.data.ticket;
       const qrep: Result<Quotation> = await rpcAsync<Quotation>(ctx["domain"], process.env["QUOTATION"], ctx["uid"], "getQuotation", qid);
       if (qrep.code === 200) {
-        const vrep: Result<Vehicle> = await rpcAsync<Vehicle>(ctx["domain"], process.env["VEHICLE"], ctx["uid"], "getVehicle", data["vid"]);
-        let recommend = qrep.data.recommend;
-        let discount = qrep.data.discount;
-        const abs = Math.abs(Number(discount) - 0.85);
-        const oids = await ctx.cache.zrangeAsync(`orders-${ctx.uid}`, 0, -1);
-        if (oids === null || oids === "") {
-          if (abs < 0.01) {
-            const urep: Result<User> = await rpcAsync<User>(ctx["domain"], process.env["PROFILE"], ctx["uid"], "getRecommend");
-            if (urep.code !== 200) {
-              discount = 1;
-              recommend = null;
-            } else {
-              discount = 0.85;
-              recommend = urep.data.id;
-            }
-          }
-        } else {
-          const multi = bluebird.promisifyAll(ctx.cache.multi()) as Multi;
-          for (const oid of oids) {
-            multi.hget("order-entities", String(oid));
-          }
-          const result: Object[] = [];
-          const oreps = await multi.execAsync();
-          for (const pkt of oreps) {
-            if (pkt !== null) {
-              const order = await msgpack_decode(pkt);
-              result.push(order);
-            }
-          }
-          const orders = result.filter(o => o["state"] === 2 || o["state"] === 3 || o["state"] === 4);
-          if (orders.length === 0) {
+        if (qrep.data.driving_view_verify_state === 3) {
+          const vrep: Result<Vehicle> = await rpcAsync<Vehicle>(ctx["domain"], process.env["VEHICLE"], ctx["uid"], "getVehicle", data["vid"]);
+          let recommend = qrep.data.recommend;
+          let discount = qrep.data.discount;
+          const abs = Math.abs(Number(discount) - 0.85);
+          const oids = await ctx.cache.zrangeAsync(`orders-${ctx.uid}`, 0, -1);
+          if (oids === null || oids === "") {
             if (abs < 0.01) {
               const urep: Result<User> = await rpcAsync<User>(ctx["domain"], process.env["PROFILE"], ctx["uid"], "getRecommend");
               if (urep.code !== 200) {
@@ -304,68 +369,97 @@ async function imputedPrice(data, ctx): Promise<any> {
               }
             }
           } else {
-            discount = 1;
-            recommend = null;
-          }
-        }
-        let purchase_price = null;
-        let real_value = 0;
-        let amount = 0;
-        if (vrep["code"] === 200) {
-          purchase_price = parseFloat(vrep["data"]["model"]["purchase_price"]);
-          const register_date: any = vrep.data.receipt_date;
-          if (register_date !== "" && register_date !== null) {
-            const expect_at = data["expect_at"];
-            const r_time = new Date(register_date);
-            const e_time = new Date(expect_at);
-            const r = moment([r_time.getFullYear(), r_time.getMonth(), r_time.getDate()]);
-            const e = moment([e_time.getFullYear(), e_time.getMonth(), e_time.getDate()]);
-            const days = e.diff(r, "days");
-            log.info("days" + days);
-            const month = Math.floor(days / 30);
-            real_value = parseFloat((purchase_price * (1 - month * 0.006)).toFixed(2));
-            const low_price = purchase_price * 0.20;
-            if (low_price >= real_value) {
-              real_value = low_price;
-            };
-            const now = new Date();
-            const n = moment([now.getFullYear(), now.getMonth() + 1]);
-            const e1 = moment([r_time.getFullYear(), r_time.getMonth() + 1]);
-            const rtn = n.diff(e1, "year");
-            console.log("years" + rtn);
-            if (rtn >= 11) {
-              amount = parseFloat((real_value * 0.85).toFixed(2));
-            } else {
-              amount = parseFloat((real_value * 0.9).toFixed(2));
+            const multi = bluebird.promisifyAll(ctx.cache.multi()) as Multi;
+            for (const oid of oids) {
+              multi.hget("order-entities", String(oid));
             }
-          } else {
-            real_value = 0;
-            amount = 0;
+            const result: Object[] = [];
+            const oreps = await multi.execAsync();
+            for (const pkt of oreps) {
+              if (pkt !== null) {
+                const order = await msgpack_decode(pkt);
+                result.push(order);
+              }
+            }
+            const orders = result.filter(o => o["state"] === 2 || o["state"] === 3 || o["state"] === 4 || o["state"] === 5 || o["state"] === 6 || o["state"] === 8 || o["state"] === 9);
+            if (orders.length === 0) {
+              if (abs < 0.01) {
+                const urep: Result<User> = await rpcAsync<User>(ctx["domain"], process.env["PROFILE"], ctx["uid"], "getRecommend");
+                if (urep.code !== 200) {
+                  discount = 1;
+                  recommend = null;
+                } else {
+                  discount = 0.85;
+                  recommend = urep.data.id;
+                }
+              }
+            } else {
+              discount = 1;
+              recommend = null;
+            }
           }
-        }
-        const quotation = qrep.data;
-        const items = quotation.items;
-        let promotion = quotation.promotion;
-        let summary = 0;
-        const p_keys = Object.keys(plans);
-        const new_keys = p_keys.filter(key => key !== "67108864" && key !== "33554432");
-        for (const key of new_keys) {
-          for (const item of items) {
-            if (String(item["plan"]["id"]) === key) {
-              for (const pair of item["pairs"]) {
-                if (plans[key] === pair["type"]) {
-                  plans[key] = Number(pair["real_price"]);
-                  summary += Number(pair["real_price"]);
+          let purchase_price = null;
+          let real_value = 0;
+          let amount = 0;
+          if (vrep["code"] === 200) {
+            purchase_price = parseFloat(vrep["data"]["model"]["purchase_price"]);
+            const register_date: any = vrep.data.register_date;
+            if (register_date !== "" && register_date !== null) {
+              const expect_at = data["expect_at"];
+              const r_time = new Date(register_date);
+              const e_time = new Date(expect_at);
+              const r = moment([r_time.getFullYear(), r_time.getMonth(), r_time.getDate()]);
+              const e = moment([e_time.getFullYear(), e_time.getMonth(), e_time.getDate()]);
+              const days = e.diff(r, "days");
+              log.info("days" + days);
+              const month = Math.floor(days / 30);
+              real_value = parseFloat((purchase_price * (1 - month * 0.006)).toFixed(2));
+              const low_price = purchase_price * 0.20;
+              if (low_price >= real_value) {
+                real_value = low_price;
+              };
+              const now = new Date();
+              const n = moment([now.getFullYear(), now.getMonth() + 1]);
+              const e1 = moment([r_time.getFullYear(), r_time.getMonth() + 1]);
+              const rtn = n.diff(e1, "year");
+              console.log("years" + rtn);
+              if (rtn >= 11) {
+                amount = parseFloat((real_value * 0.85).toFixed(2));
+              } else {
+                amount = parseFloat((real_value * 0.9).toFixed(2));
+              }
+            } else {
+              real_value = 0;
+              amount = 0;
+            }
+          }
+          const quotation = qrep.data;
+          const items = quotation.items;
+          let promotion = quotation.promotion;
+          let summary = 0;
+          const p_keys = Object.keys(plans);
+          const new_keys = p_keys.filter(key => key !== "67108864" && key !== "33554432");
+          for (const key of new_keys) {
+            for (const item of items) {
+              if (String(item["plan"]["id"]) === key) {
+                for (const pair of item["pairs"]) {
+                  if (plans[key] === pair["type"]) {
+                    plans[key] = Number(pair["real_price"]);
+                    summary += Number(pair["real_price"]);
+                  }
                 }
               }
             }
           }
+          const payment = parseFloat((summary - Number(promotion)).toFixed(2));
+          const new_payment = (Math.floor(payment * discount * 100)) / 100;
+          promotion = summary - new_payment;
+          const new_data = { recommend: recommend, summary: summary, payment: new_payment, promotion: promotion, plans: plans, ticket: ticket, real_value: real_value, amount: amount };
+          return { code: 200, data: new_data };
+        } else {
+          log.info("证件审核未通过");
+          return { code: 501, msg: "您的证件审核未通过，暂不能创建订单" };
         }
-        const payment = parseFloat((summary - Number(promotion)).toFixed(2));
-        const new_payment = (Math.floor(payment * discount * 10000)) / 10000;
-        promotion = summary - new_payment;
-        const new_data = { recommend: recommend, summary: summary, payment: new_payment, promotion: promotion, plans: plans, ticket: ticket, real_value: real_value, amount: amount };
-        return { code: 200, data: new_data };
       } else {
         return { code: qrep["code"], msg: qrep["msg"] };
       }
@@ -499,13 +593,13 @@ async function pay_event(ctx: BusinessEventContext, data: any): Promise<any> {
       if (order_entities.state !== 1) {
         return { code: 501, msg: "该状态订单不支持支付" };
       } else {
-        if (Number(order_entities.payment == Number(data["amount"]))) {
+        if (Number(order_entities.payment) !== Number(data["amount"])) {
           return { code: 502, msg: "实际支付金额有误" };
         } else {
           let commission_ratio = 0;
-          if (data["payment_method"] === 1) {
+          if (Number(data["payment_method"]) === 1) {
             commission_ratio = 0;
-          } else if (data["payment_method"] === 2) {
+          } else if (Number(data["payment_method"]) === 2) {
             commission_ratio = 0.01;
           }
           const occurred_at = new Date();
@@ -1255,9 +1349,6 @@ async function underWrite(ctx: BusinessEventContext, evtid: string): Promise<any
 }
 
 
-
-
-
 async function pay(ctx: BusinessEventContext, evtid: string, no: string): Promise<any> {
   log.info("pay");
   const db: PGClient = ctx.db;
@@ -1273,49 +1364,24 @@ async function pay(ctx: BusinessEventContext, evtid: string, no: string): Promis
     await db.query("UPDATE plan_orders SET state = $1, state_description = $2, payment_method = $3, commission_ratio = $4, paid_at= $5, updated_at = $6 WHERE id = $7", [state, state_description, data["payment_method"], data["commission_ratio"], paid_at, paid_at, result["oid"]]);
     await db.query("COMMIT");
     await async_plan_orders(db, cache, ctx.domain, result["uid"], result["oid"]);
-    const wrep = await rpcAsync<Object>(ctx.domain, process.env["WALLET"], result["uid"], "recharge", result["oid"]);
-    if (wrep["code"] === 200 || wrep["code"] === 504) {
-      const prep = rpcAsync<Object>(ctx.domain, process.env["PERSON"], result["uid"], "setPersonVerified", data["identity_no"], true);
-      const openid = await cache.hgetAsync("wxuser", result["uid"]);
-      const postData = queryString.stringify({
-        "user": String(openid),
-        "OrderNo": no,
-        "Plan": "好司机 互助计划",
-        "Price": data["amount"],
-        "orderId": result["oid"]
-      });
-      const options = {
-        hostname: wxhost,
-        port: 80,
-        path: "/wx/tmsgPaySuccess",
-        method: "GET",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Content-Length": Buffer.byteLength(postData)
-        }
-      };
-      const req = http.request(options, (res) => {
-        log.info("Status: " + res.statusCode);
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          console.log(`BODY: ${chunk}`);
-        });
-        res.on("end", () => {
-          console.log("No more data in response.");
-        });
-      });
-      req.on("error", (e) => {
-        console.log(`problem with request: ${e.message}`);
-      });
-      req.write(postData);
-      req.end();
-      const plrep = rpcAsync<Object>(ctx.domain, process.env["PLAN"], result["uid"], "increaseJoinedCount");
-      log.info("prep" + JSON.stringify(plrep));
-      return { code: 200, data: result["oid"] };
-    } else {
-      log.info("wrep" + JSON.stringify(wrep));
-      return { code: wrep["code"], msg: "更新钱包数据失败: " + wrep["msg"] };
+    // const wrep = await rpcAsync<Object>(ctx.domain, process.env["WALLET"], result["uid"], "recharge", result["oid"]);
+    // if (wrep["code"] === 200 || wrep["code"] === 504) {
+    const prep = rpcAsync<Object>(ctx.domain, process.env["PERSON"], result["uid"], "setPersonVerified", data["identity_no"], true);
+    const openid = await cache.hgetAsync("wxuser", result["uid"]);
+    sendTmsgBypaySuccess(result["oid"], String(openid), no, data["amount"], cache);
+    const oJson = await cache.hgetAsync("order-entities", result["oid"]);
+    const order: PlanOrder = await msgpack_decode(oJson) as PlanOrder;
+    log.info("recommend" + order.recommend);
+    if (order.recommend !== null && order.recommend.length === 36) {
+      sendTmsgByrecommend(ctx.domain, result["oid"], paid_at, order.recommend, order.insured.name, result["uid"], cache);
     }
+    const plrep = rpcAsync<Object>("admin", process.env["PLAN"], result["uid"], "increaseJoinedCount");
+    log.info("prep" + JSON.stringify(plrep));
+    return { code: 200, data: result["oid"] };
+    // } else {
+    //   log.info("wrep" + JSON.stringify(wrep));
+    //   return { code: wrep["code"], msg: "更新钱包数据失败: " + wrep["msg"] };
+    // }
   } catch (e) {
     log.info(e);
     await db.query("ROLLBACK");
@@ -1443,7 +1509,7 @@ async function create_sale_order(ctx: BusinessEventContext, evtid: string): Prom
 
 
 async function async_plan_orders(db: PGClient, cache: RedisClient, domain: string, uid: string, oid?: string): Promise<any> {
-  const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.uid AS o_uid, o.qid AS o_qid, o.vid AS o_vid, o.state AS o_state, o.state_description AS o_state_description, o.summary AS o_summary, o.payment AS o_payment, o.owner AS o_owner, o.insured AS o_insured, o.promotion AS o_promotion, o.service_ratio AS o_service_ratio, o.payment_method AS o_payment_method, o.commission_ratio AS o_commission_ratio, o.real_value AS o_real_value, o.recommend AS o_recommend,o.inviter AS o_inviter, o.expect_at AS o_expect_at, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at,o.driving_frontal_view AS o_driving_frontal_view, o.driving_rear_view AS o_driving_rear_view, o.created_at AS o_created_at, o.updated_at AS o_updated_at, o.evtid AS o_evtid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.amount AS oi_amount FROM plan_order_items AS oi INNER JOIN plan_orders AS o ON o.id = oi.oid WHERE o.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
+  const result: QueryResult = await db.query("SELECT o.id AS o_id, o.no AS o_no, o.uid AS o_uid, o.qid AS o_qid, o.vid AS o_vid, o.state AS o_state, o.state_description AS o_state_description, o.summary AS o_summary, o.payment AS o_payment, o.owner AS o_owner, o.insured AS o_insured, o.promotion AS o_promotion, o.service_ratio AS o_service_ratio, o.payment_method AS o_payment_method, o.commission_ratio AS o_commission_ratio, o.real_value AS o_real_value, o.recommend AS o_recommend,o.inviter AS o_inviter, o.expect_at AS o_expect_at, o.start_at AS o_start_at, o.stop_at AS o_stop_at, o.paid_at AS o_paid_at,o.driving_frontal_view AS o_driving_frontal_view, o.driving_rear_view AS o_driving_rear_view, o.created_at AS o_created_at, o.updated_at AS o_updated_at, o.evtid AS o_evtid, oi.id AS oi_id, oi.pid AS oi_pid, oi.price AS oi_price, oi.amount AS oi_amount FROM plan_order_items AS oi INNER JOIN plan_orders AS o ON o.id = oi.oid WHERE oi.deleted = FALSE AND o.deleted = FALSE" + (oid ? " AND o.id = $1" : ""), oid ? [oid] : []);
   const orders = {};
   try {
     for (const row of result.rows) {
