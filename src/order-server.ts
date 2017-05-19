@@ -1,11 +1,10 @@
-import { Server, ServerContext, rpcAsync, AsyncServerFunction, CmdPacket, wait_for_response, Permission, waitingAsync, msgpack_decode_async as msgpack_decode, msgpack_encode_async as msgpack_encode } from "hive-service";
+import { Server, ServerContext, rpcAsync, AsyncServerFunction, CmdPacket, wait_for_response, Permission, waitingAsync, msgpack_decode_async, msgpack_encode_async, Result } from "hive-service";
 import { RedisClient, Multi } from "redis";
 import * as bunyan from "bunyan";
 import * as uuid from "uuid";
-import * as http from "http";
 import { verify, uuidVerifier, stringVerifier, numberVerifier, dateVerifier, arrayVerifier, objectVerifier } from "hive-verify";
-import * as Disq from "hive-disque";
 import * as bluebird from "bluebird";
+import { PlanOrder } from "order-library";
 
 const allowAll: Permission[] = [["mobile", true], ["admin", true]];
 const mobileOnly: Permission[] = [["mobile", true], ["admin", false]];
@@ -77,7 +76,7 @@ async function checkOrderLimit(domain: string, uid: string, vid: string, owner: 
           const oreps = await multi.execAsync();
           for (const pkt of oreps) {
             if (pkt !== null) {
-              const order = await msgpack_decode(pkt);
+              const order = await msgpack_decode_async(pkt);
               result.push(order);
             }
           }
@@ -148,7 +147,7 @@ server.callAsync("createPlanOrder", allowAll, "创建订单", "用户提交订�
           }
         } else {
           const orderJson = await ctx.cache.hgetAsync("order-entities", oid);
-          const order_entities = await msgpack_decode(orderJson);
+          const order_entities = await msgpack_decode_async(orderJson);
           if (order_entities["state"] === 2 || order_entities["state"] === 3) {
             return { code: 501, msg: "该车有计划生效订单，若要重新提交订单，请取消该订单" };
           } else if (order_entities["state"] === 4) {
@@ -204,7 +203,7 @@ server.callAsync("createDriverOrder", allowAll, "用户下司机订单", "用户
     if (drep === null || drep === "") {
       drivers = [];
     } else {
-      drivers = await msgpack_decode(drep);
+      drivers = await msgpack_decode_async(drep);
     }
     const tlen = drivers.length + len;
     if (tlen > 3) {
@@ -474,7 +473,7 @@ server.callAsync("getPlanOrder", allowAll, "获取订单详情", "获得订单�
     if (orep === null || orep === "") {
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
-      const order_entities = await msgpack_decode(orep);
+      const order_entities = await msgpack_decode_async(orep);
       const nowDate = new Date();
       const uid = order_entities["uid"];
       if (ctx.domain === "admin") {
@@ -516,7 +515,7 @@ server.callAsync("getPlanOrdersByUser", allowAll, "获取订单列表", "获得�
       const oreps = await multi.execAsync();
       for (const pkt of oreps) {
         if (pkt !== null) {
-          const order = await msgpack_decode(pkt);
+          const order = await msgpack_decode_async(pkt);
           orders.push(order);
         }
       }
@@ -549,7 +548,7 @@ server.callAsync("getPlanOrderByVehicle", allowAll, "获取计划单", "根据vi
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
       const orep = await ctx.cache.hgetAsync("order-entities", String(poid));
-      const order_entities = await msgpack_decode(orep);
+      const order_entities = await msgpack_decode_async(orep);
       const uid = order_entities["uid"];
       if (ctx.domain === "admin") {
         return { code: 200, data: order_entities, now: now };
@@ -585,7 +584,7 @@ server.callAsync("getPlanOrderByQid", allowAll, "获取订单详情", "根据ｑ
     if (orep === null || orep === "") {
       return { code: 404, msg: "未找到对应订单信息" };
     } else {
-      const order_entities = await msgpack_decode(orep);
+      const order_entities = await msgpack_decode_async(orep);
       const uid = order_entities["uid"];
       if (ctx.domain === "admin") {
         return { code: 200, data: order_entities, now: now };
@@ -621,7 +620,7 @@ server.callAsync("getOrdersByVid", allowAll, "获取车辆对应所有订单", "
       const oreps = await multi.execAsync();
       const orders = [];
       for (const orep of oreps) {
-        const o = await msgpack_decode(orep);
+        const o = await msgpack_decode_async(orep);
         if (o !== null) {
           orders.push(o);
         }
@@ -657,6 +656,37 @@ server.callAsync("getDeletedPlanOrder", allowAll, "获取订单信息", "获取�
   return await waitingAsync(ctx);
 });
 
+server.callAsync("getPlanOrderByNo", allowAll, "获取订单", "根据订单号获取对应订单", async (ctx: ServerContext, no: string) => {
+  log.info(`getPlanOrderByNo, domain: ${ctx.domain}, uid: ${ctx.uid}, no: ${no}`);
+  try {
+    await verify([stringVerifier("no", no)]);
+  } catch (e) {
+    ctx.report(3, e);
+    return { code: 400, msg: e.message };
+  }
+  const oid = await ctx.cache.hgetAsync("orderno-id", no);
+  if (oid) {
+    const pkt = await ctx.cache.hgetAsync("order-entities", oid.toString());
+    if (pkt) {
+      const order: PlanOrder = await msgpack_decode_async(pkt) as PlanOrder;
+      if (ctx.domain === "admin") {
+        return { code: 200, data: order };
+      } else {
+        if (ctx.uid === order.uid) {
+          return { code: 200, data: order };
+        } else {
+          return { code: 403, msg: `无权获取订单 ${no}` };
+        }
+      }
+    } else {
+      return { code: 404, msg: `订单 ${no} 未找到` };
+    }
+  } else {
+    return { code: 404, msg: `订单 ${no} 未找到` };
+  }
+});
+
+
 server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (ctx: ServerContext, order_id?: string) => {
   log.info(`refresh, order_id: ${order_id}`);
   if (order_id) {
@@ -671,3 +701,15 @@ server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (c
 });
 
 
+// server.callAsync("refresh", adminOnly, "refresh", "刷新订单数据", async (ctx: ServerContext, order_id?: string) => {
+//   log.info(`refresh, order_id: ${order_id ? order_id : ""}`);
+//   if (order_id) {
+//     const pkt: CmdPacket = { cmd: "refresh", args: [order_id] };
+//     ctx.publish(pkt);
+//     return await waitingAsync(ctx);
+//   } else {
+//     const pkt: CmdPacket = { cmd: "refresh", args: [] };
+//     ctx.publish(pkt);
+//     return await waitingAsync(ctx);
+//   }
+// });
